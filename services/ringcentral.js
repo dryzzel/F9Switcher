@@ -291,7 +291,11 @@ async function deletePhoneNumber(phoneNumberId, maxRetries = 3) {
       console.log(`[RC]   URL: DELETE ${url}`);
       console.log(`[RC]   Body: ${JSON.stringify(body)}`);
 
-      const resp = await platform.delete(url, body);
+      const resp = await platform.send({
+        method: 'DELETE',
+        url,
+        body,
+      });
 
       // 204 No Content = success (no body to parse)
       // Some RC endpoints return 200 with a body
