@@ -1,5 +1,6 @@
 // ============================================================
 // Number Switcher — Frontend Application Logic
+// Now with job polling for rate-limited queue backend
 // ============================================================
 
 const API_BASE = '';
@@ -9,6 +10,8 @@ let extensions = [];
 let selectedExtension = null;
 let currentDirectNumber = null;
 let inventoryNumbers = [];
+let activeJobId = null; // currently polling job
+let pollTimer = null;
 
 // ── DOM Elements ──
 const agentSelect = document.getElementById('agentSelect');
@@ -30,6 +33,9 @@ const statusDot = document.getElementById('statusDot');
 const statusText = document.getElementById('statusText');
 const statToday = document.getElementById('statToday');
 const statTotal = document.getElementById('statTotal');
+const loaderText = document.getElementById('loaderText');
+const queuePill = document.getElementById('queuePill');
+const queuePillText = document.getElementById('queuePillText');
 
 // ──────────────────────────────────────────────
 //  INITIALIZATION
@@ -37,7 +43,6 @@ const statTotal = document.getElementById('statTotal');
 
 document.addEventListener('DOMContentLoaded', async () => {
   try {
-    // Load extensions and history in parallel
     await Promise.all([loadExtensions(), loadHistory()]);
     setStatus('connected', 'Connected');
   } catch (error) {
@@ -45,19 +50,15 @@ document.addEventListener('DOMContentLoaded', async () => {
     setStatus('error', 'Connection Failed');
   }
 
-  // Event listeners
   agentSelect.addEventListener('change', onAgentSelected);
   btnSwitch.addEventListener('click', onSwitchClicked);
   btnCancel.addEventListener('click', closeModal);
   btnConfirm.addEventListener('click', executeSwitchNumber);
   btnRefreshHistory.addEventListener('click', loadHistory);
 
-  // Close modal on overlay click
   confirmModal.addEventListener('click', (e) => {
     if (e.target === confirmModal) closeModal();
   });
-
-  // Close modal on Escape
   document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape') closeModal();
   });
@@ -93,7 +94,6 @@ async function loadExtensions() {
     const { data } = await apiCall('GET', '/api/extensions');
     extensions = data;
 
-    // Populate the dropdown
     agentSelect.innerHTML = '<option value="">— Select an agent —</option>';
     for (const ext of extensions) {
       const option = document.createElement('option');
@@ -115,11 +115,9 @@ async function loadHistory() {
   try {
     const { data, stats } = await apiCall('GET', '/api/history?limit=50');
 
-    // Update stats
     statToday.textContent = stats.todayChanges;
     statTotal.textContent = stats.totalChanges;
 
-    // Render history
     if (data.length === 0) {
       historyList.innerHTML = `
         <div class="history-empty">
@@ -190,7 +188,6 @@ async function loadHistory() {
 async function onAgentSelected() {
   const extensionId = agentSelect.value;
 
-  // Reset state
   currentDirectNumber = null;
   inventoryNumbers = [];
   btnSwitch.disabled = true;
@@ -202,10 +199,8 @@ async function onAgentSelected() {
     return;
   }
 
-  // Find the selected extension
   selectedExtension = extensions.find((e) => String(e.id) === extensionId);
 
-  // Fetch current number and inventory in parallel
   try {
     agentSelect.disabled = true;
 
@@ -214,7 +209,6 @@ async function onAgentSelected() {
       apiCall('GET', '/api/inventory'),
     ]);
 
-    // Show current number
     currentDirectNumber = numbersResp.data.directNumber;
     if (currentDirectNumber) {
       currentNumberValue.textContent = formatPhone(currentDirectNumber.phoneNumber);
@@ -226,12 +220,10 @@ async function onAgentSelected() {
       currentNumberDisplay.style.display = 'block';
     }
 
-    // Show inventory info
     inventoryNumbers = invResp.data;
     inventoryCount.textContent = inventoryNumbers.length;
     inventoryInfo.style.display = 'flex';
 
-    // Enable switch button if we have both a current number and inventory
     btnSwitch.disabled = !currentDirectNumber || inventoryNumbers.length === 0;
   } catch (error) {
     console.error('Error loading agent data:', error);
@@ -246,7 +238,6 @@ async function onAgentSelected() {
 function onSwitchClicked() {
   if (!selectedExtension || !currentDirectNumber) return;
 
-  // Show confirmation modal
   confirmDetails.innerHTML = `
     <div class="detail-row">
       <span class="detail-label">Agent</span>
@@ -272,94 +263,212 @@ function closeModal() {
   confirmModal.style.display = 'none';
 }
 
+// ──────────────────────────────────────────────
+//  SWITCH EXECUTION (with Job Polling)
+// ──────────────────────────────────────────────
+
 async function executeSwitchNumber() {
   closeModal();
 
   // Show loading state
   const btnText = btnSwitch.querySelector('.btn-text');
+  const btnIcon = btnSwitch.querySelector('.btn-icon');
   const btnLoader = btnSwitch.querySelector('.btn-loader');
   btnText.style.display = 'none';
-  btnSwitch.querySelector('.btn-icon').style.display = 'none';
+  btnIcon.style.display = 'none';
   btnLoader.style.display = 'flex';
   btnSwitch.disabled = true;
   agentSelect.disabled = true;
+  resultArea.style.display = 'none';
+  loaderText.textContent = 'Enqueuing...';
 
   try {
+    // Step 1: Enqueue the job (returns immediately)
     const { data } = await apiCall('POST', '/api/switch-number', {
       extensionId: String(selectedExtension.id),
       extensionName: selectedExtension.name,
       extensionNumber: selectedExtension.extensionNumber,
     });
 
-    // Show success result
-    const deletionBadge = data.oldNumberDeleted
-      ? `<div class="deletion-badge success">
-           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="width:14px;height:14px">
-             <polyline points="20 6 9 17 4 12"></polyline>
-           </svg>
-           Old number permanently deleted
-         </div>`
-      : `<div class="deletion-badge warning">
-           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:14px;height:14px">
-             <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path>
-             <line x1="12" y1="9" x2="12" y2="13"></line>
-             <line x1="12" y1="17" x2="12.01" y2="17"></line>
-           </svg>
-           Old number may still be in inventory
-         </div>`;
+    activeJobId = data.jobId;
 
-    resultContent.innerHTML = `
-      <div class="result-success">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" class="result-icon">
-          <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path>
-          <polyline points="22 4 12 14.01 9 11.01"></polyline>
-        </svg>
-        <div class="result-text">
-          <h4>Number Switched Successfully!</h4>
-          <p>${escapeHtml(data.message)}</p>
-        </div>
-      </div>
-      <div class="number-swap-display">
-        <span class="old-num">${formatPhone(data.oldNumber)}</span>
-        <span class="arrow">→</span>
-        <span class="new-num">${formatPhone(data.newNumber)}</span>
-      </div>
-      ${deletionBadge}
-    `;
-    resultArea.style.display = 'block';
+    // Show queue position
+    if (data.position > 1) {
+      loaderText.textContent = `Queued (position ${data.position})...`;
+    } else {
+      loaderText.textContent = 'Processing...';
+    }
 
-    // Refresh the agent's current number display
-    currentNumberValue.textContent = formatPhone(data.newNumber);
-    currentNumberMeta.textContent = 'Just updated';
+    // Update queue pill
+    updateQueuePill(data.queueInfo);
 
-    // Refresh history and stats
-    await loadHistory();
+    // Step 2: Poll for result
+    const result = await pollJobUntilDone(data.jobId);
+
+    if (result.status === 'completed' && result.result) {
+      showSuccessResult(result.result);
+      currentNumberValue.textContent = formatPhone(result.result.newNumber);
+      currentNumberMeta.textContent = 'Just updated';
+      await loadHistory();
+    } else if (result.status === 'failed') {
+      showErrorResult(result.error || 'Unknown error');
+      await loadHistory();
+    }
+
   } catch (error) {
-    // Show error result
-    resultContent.innerHTML = `
-      <div class="result-error">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="result-icon">
-          <circle cx="12" cy="12" r="10"></circle>
-          <line x1="15" y1="9" x2="9" y2="15"></line>
-          <line x1="9" y1="9" x2="15" y2="15"></line>
-        </svg>
-        <div class="result-text">
-          <h4>Switch Failed</h4>
-          <p>${escapeHtml(error.message)}</p>
-        </div>
-      </div>
-    `;
-    resultArea.style.display = 'block';
-
-    // Refresh history (error attempts are also logged)
-    await loadHistory();
+    showErrorResult(error.message);
+    try { await loadHistory(); } catch (_) {}
   } finally {
-    // Restore button state
+    activeJobId = null;
+    stopPolling();
     btnText.style.display = 'inline';
-    btnSwitch.querySelector('.btn-icon').style.display = 'block';
+    btnIcon.style.display = 'block';
     btnLoader.style.display = 'none';
     btnSwitch.disabled = false;
     agentSelect.disabled = false;
+    loaderText.textContent = 'Processing...';
+    updateQueuePill(null);
+  }
+}
+
+/**
+ * Poll GET /api/jobs/:id every 2s until completed or failed.
+ */
+function pollJobUntilDone(jobId) {
+  return new Promise((resolve, reject) => {
+    const POLL_INTERVAL = 2000;
+    let attempts = 0;
+    const MAX_ATTEMPTS = 150; // 5 minutes max
+
+    async function poll() {
+      attempts++;
+      if (attempts > MAX_ATTEMPTS) {
+        reject(new Error('Job timed out after 5 minutes'));
+        return;
+      }
+
+      try {
+        const { data } = await apiCall('GET', `/api/jobs/${jobId}`);
+
+        // Update UI based on status
+        if (data.status === 'queued') {
+          loaderText.textContent = data.position > 0
+            ? `Queued (position ${data.position})...`
+            : 'Queued...';
+          updateQueuePill(data.queueInfo);
+
+        } else if (data.status === 'processing') {
+          loaderText.textContent = 'Switching number...';
+
+        } else if (data.status === 'completed') {
+          resolve(data);
+          return;
+
+        } else if (data.status === 'failed') {
+          resolve(data);
+          return;
+        }
+
+        // Schedule next poll
+        pollTimer = setTimeout(poll, POLL_INTERVAL);
+
+      } catch (error) {
+        // Network error — retry a few more times
+        if (attempts < MAX_ATTEMPTS) {
+          pollTimer = setTimeout(poll, POLL_INTERVAL * 2);
+        } else {
+          reject(error);
+        }
+      }
+    }
+
+    poll();
+  });
+}
+
+function stopPolling() {
+  if (pollTimer) {
+    clearTimeout(pollTimer);
+    pollTimer = null;
+  }
+}
+
+// ──────────────────────────────────────────────
+//  RESULT DISPLAY
+// ──────────────────────────────────────────────
+
+function showSuccessResult(result) {
+  const deletionBadge = result.oldNumberDeleted
+    ? `<div class="deletion-badge success">
+         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="width:14px;height:14px">
+           <polyline points="20 6 9 17 4 12"></polyline>
+         </svg>
+         Old number permanently deleted
+       </div>`
+    : `<div class="deletion-badge warning">
+         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:14px;height:14px">
+           <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path>
+           <line x1="12" y1="9" x2="12" y2="13"></line>
+           <line x1="12" y1="17" x2="12.01" y2="17"></line>
+         </svg>
+         Old number may still be in inventory
+       </div>`;
+
+  resultContent.innerHTML = `
+    <div class="result-success">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" class="result-icon">
+        <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path>
+        <polyline points="22 4 12 14.01 9 11.01"></polyline>
+      </svg>
+      <div class="result-text">
+        <h4>Number Switched Successfully!</h4>
+        <p>${escapeHtml(result.message)}</p>
+      </div>
+    </div>
+    <div class="number-swap-display">
+      <span class="old-num">${formatPhone(result.oldNumber)}</span>
+      <span class="arrow">→</span>
+      <span class="new-num">${formatPhone(result.newNumber)}</span>
+    </div>
+    ${deletionBadge}
+  `;
+  resultArea.style.display = 'block';
+}
+
+function showErrorResult(message) {
+  resultContent.innerHTML = `
+    <div class="result-error">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="result-icon">
+        <circle cx="12" cy="12" r="10"></circle>
+        <line x1="15" y1="9" x2="9" y2="15"></line>
+        <line x1="9" y1="9" x2="15" y2="15"></line>
+      </svg>
+      <div class="result-text">
+        <h4>Switch Failed</h4>
+        <p>${escapeHtml(message)}</p>
+      </div>
+    </div>
+  `;
+  resultArea.style.display = 'block';
+}
+
+// ──────────────────────────────────────────────
+//  QUEUE UI HELPERS
+// ──────────────────────────────────────────────
+
+function updateQueuePill(queueInfo) {
+  if (!queueInfo || queueInfo.pendingJobs === 0) {
+    queuePill.style.display = 'none';
+    return;
+  }
+  queuePill.style.display = 'flex';
+
+  if (queueInfo.isPaused) {
+    queuePillText.textContent = `Cooldown: ${queueInfo.pauseRemainingSec}s`;
+    queuePill.classList.add('paused');
+  } else {
+    queuePillText.textContent = `Queue: ${queueInfo.pendingJobs}`;
+    queuePill.classList.remove('paused');
   }
 }
 
@@ -376,7 +485,6 @@ function setStatus(state, text) {
 
 function formatPhone(phone) {
   if (!phone) return '—';
-  // Format US numbers: +1XXXXXXXXXX → (XXX) XXX-XXXX
   const cleaned = phone.replace(/\D/g, '');
   if (cleaned.length === 11 && cleaned.startsWith('1')) {
     return `(${cleaned.slice(1, 4)}) ${cleaned.slice(4, 7)}-${cleaned.slice(7)}`;
@@ -393,21 +501,16 @@ function formatTime(dateStr) {
   const now = new Date();
   const diff = now - date;
 
-  // If less than 1 minute
   if (diff < 60000) return 'Just now';
-  // If less than 1 hour
   if (diff < 3600000) return `${Math.floor(diff / 60000)}m ago`;
-  // If today
   if (date.toDateString() === now.toDateString()) {
     return date.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
   }
-  // If yesterday
   const yesterday = new Date(now);
   yesterday.setDate(yesterday.getDate() - 1);
   if (date.toDateString() === yesterday.toDateString()) {
     return `Yesterday ${date.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}`;
   }
-  // Otherwise
   return date.toLocaleDateString('en-US', {
     month: 'short',
     day: 'numeric',

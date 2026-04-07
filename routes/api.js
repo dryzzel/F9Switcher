@@ -1,10 +1,12 @@
 // ============================================================
 // API Routes — REST endpoints for the Number Switcher
+// Now with job-based async processing via queue
 // ============================================================
 const express = require('express');
 const router = express.Router();
 const rc = require('../services/ringcentral');
 const db = require('../services/database');
+const queue = require('../services/queue');
 
 // ──────────────────────────────────────────────
 //  GET /api/extensions
@@ -73,16 +75,17 @@ router.get('/inventory', async (req, res) => {
 
 // ──────────────────────────────────────────────
 //  POST /api/switch-number
-//  Execute a phone number switch for an agent
+//  Enqueue a phone number switch job.
+//  Returns immediately with jobId for polling.
 //
 //  Body: {
 //    extensionId: "123456",
-//    extensionName: "John Doe" (optional, for logging),
-//    extensionNumber: "101" (optional, for logging),
-//    preferredNumberId: "789" (optional, to pick a specific number)
+//    extensionName: "John Doe",
+//    extensionNumber: "101",
+//    preferredNumberId: "789" (optional)
 //  }
 // ──────────────────────────────────────────────
-router.post('/switch-number', async (req, res) => {
+router.post('/switch-number', (req, res) => {
   const { extensionId, extensionName, extensionNumber, preferredNumberId } =
     req.body;
 
@@ -93,65 +96,80 @@ router.post('/switch-number', async (req, res) => {
     });
   }
 
-  try {
-    console.log(
-      `[API] 🚀 Number switch requested for extension ${extensionId} (${extensionName || 'unknown'})`
-    );
+  console.log(
+    `[API] 🚀 Switch requested for ${extensionName || extensionId} → enqueuing`
+  );
 
-    const result = await rc.switchAgentNumber(extensionId, preferredNumberId);
+  const job = queue.enqueue({
+    extensionId: String(extensionId),
+    extensionName: extensionName || 'Unknown',
+    extensionNumber: extensionNumber || '',
+    preferredNumberId,
+  });
 
-    // Log the successful change to the database
-    db.logChange({
-      extensionId,
-      extensionName: extensionName || 'Unknown',
-      extensionNumber: extensionNumber || '',
-      oldPhoneNumber: result.oldNumber.phoneNumber,
-      oldPhoneNumberId: result.oldNumber.id,
-      newPhoneNumber: result.newNumber.phoneNumber,
-      newPhoneNumberId: result.newNumber.id,
-    });
+  const queueStatus = queue.getStatus();
 
-    console.log(
-      `[API] ✅ Number switched: ${result.oldNumber.phoneNumber} → ${result.newNumber.phoneNumber}`
-    );
-
-    res.json({
-      success: true,
-      data: {
-        extensionId,
-        oldNumber: result.oldNumber.phoneNumber,
-        newNumber: result.newNumber.phoneNumber,
-        oldNumberDeleted: result.oldNumberDeleted,
-        deleteWarning: result.deleteError || null,
-        message: result.oldNumberDeleted
-          ? `Number changed from ${result.oldNumber.phoneNumber} to ${result.newNumber.phoneNumber}. Old number deleted from account.`
-          : `Number changed from ${result.oldNumber.phoneNumber} to ${result.newNumber.phoneNumber}. ⚠️ Old number may still be in inventory.`,
+  res.json({
+    success: true,
+    data: {
+      jobId: job.id,
+      status: job.status,
+      position: job.position,
+      queueInfo: {
+        pendingJobs: queueStatus.pendingJobs,
+        heavyCallsAvailable: queueStatus.heavyCallsAvailable,
+        isPaused: queueStatus.isPaused,
+        pauseRemainingSec: queueStatus.pauseRemainingSec,
       },
-    });
-  } catch (error) {
-    console.error('[API] ❌ Number switch failed:', error.message);
+    },
+  });
+});
 
-    // Log the failed attempt
-    try {
-      const currentNumber = await rc.getCurrentDirectNumber(extensionId).catch(() => null);
-      db.logError({
-        extensionId,
-        extensionName: extensionName || 'Unknown',
-        extensionNumber: extensionNumber || '',
-        oldPhoneNumber: currentNumber?.phoneNumber || '',
-        oldPhoneNumberId: currentNumber?.id || '',
-        errorMessage: error.message,
-      });
-    } catch (_) {
-      // Silent fail on logging
-    }
+// ──────────────────────────────────────────────
+//  GET /api/jobs/:id
+//  Poll a job's status. Frontend calls this every 2s.
+// ──────────────────────────────────────────────
+router.get('/jobs/:id', (req, res) => {
+  const job = queue.getJob(req.params.id);
 
-    res.status(500).json({
+  if (!job) {
+    return res.status(404).json({
       success: false,
-      error: 'Failed to switch phone number',
-      details: error.message,
+      error: 'Job not found or expired',
     });
   }
+
+  const queueStatus = queue.getStatus();
+
+  res.json({
+    success: true,
+    data: {
+      jobId: job.id,
+      status: job.status,
+      position: job.position,
+      result: job.result,
+      error: job.error,
+      createdAt: job.createdAt,
+      startedAt: job.startedAt,
+      completedAt: job.completedAt,
+      queueInfo: {
+        pendingJobs: queueStatus.pendingJobs,
+        isPaused: queueStatus.isPaused,
+        pauseRemainingSec: queueStatus.pauseRemainingSec,
+      },
+    },
+  });
+});
+
+// ──────────────────────────────────────────────
+//  GET /api/queue/status
+//  Queue health / monitoring endpoint
+// ──────────────────────────────────────────────
+router.get('/queue/status', (req, res) => {
+  res.json({
+    success: true,
+    data: queue.getStatus(),
+  });
 });
 
 // ──────────────────────────────────────────────

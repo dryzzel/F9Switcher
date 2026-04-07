@@ -8,6 +8,39 @@ const { SDK } = require('@ringcentral/sdk');
 let platform = null;
 let sdk = null;
 
+// ── Rate limit callback (set by queue via onRateLimitInfo) ──
+let _rateLimitCallback = null;
+
+/**
+ * Subscribe to rate limit info from RC API responses.
+ * @param {function} callback — receives { group, remaining, limit, window, is429?, retryAfter? }
+ */
+function onRateLimitInfo(callback) {
+  _rateLimitCallback = callback;
+}
+
+/**
+ * Extract rate limit headers from an RC API response and notify subscriber.
+ */
+function _reportRateLimit(resp, is429 = false, retryAfter = null) {
+  try {
+    const headers = resp?.headers;
+    if (!headers || !headers.get) return;
+
+    const group = headers.get('x-rate-limit-group') || '';
+    const remaining = headers.get('x-rate-limit-remaining') || '';
+    const limit = headers.get('x-rate-limit-limit') || '';
+    const window = headers.get('x-rate-limit-window') || '';
+
+    if (group) {
+      console.log(`[RC] 📊 Rate [${group}]: ${remaining}/${limit} left (window: ${window}s)`);
+      if (_rateLimitCallback) {
+        _rateLimitCallback({ group, remaining, limit, window, is429, retryAfter });
+      }
+    }
+  } catch (_) {}
+}
+
 // ──────────────────────────────────────────────
 //  INITIALIZATION
 // ──────────────────────────────────────────────
@@ -223,40 +256,53 @@ function delay(ms) {
  * @param {string} inventoryPhoneNumberId - ID of the number FROM INVENTORY (source, goes in URL)
  * @param {string} agentCurrentPhoneNumberId - ID of the agent's CURRENT number (target, goes in body)
  */
-async function replacePhoneNumber(inventoryPhoneNumberId, agentCurrentPhoneNumberId) {
+async function replacePhoneNumber(inventoryPhoneNumberId, agentCurrentPhoneNumberId, maxRetries = 3) {
   await ensurePlatform();
 
-  // Ensure IDs are strings (CMN-101 can happen if they're numbers)
   const sourceId = String(inventoryPhoneNumberId);
   const targetId = String(agentCurrentPhoneNumberId);
   const url = `/restapi/v2/accounts/~/phone-numbers/${sourceId}/replace`;
   const body = { targetPhoneNumberId: targetId };
 
-  console.log(`[RC] 🔄 Replace request:`);
-  console.log(`[RC]   URL: POST ${url}`);
-  console.log(`[RC]   Body: ${JSON.stringify(body)}`);
-  console.log(`[RC]   Source (inventory) ID: ${sourceId}`);
-  console.log(`[RC]   Target (agent current) ID: ${targetId}`);
-
-  try {
-    const resp = await platform.post(url, body);
-    const result = await resp.json();
-    console.log('[RC] ✅ Phone number replaced successfully');
-    console.log('[RC]   Response:', JSON.stringify(result, null, 2));
-    return result;
-  } catch (err) {
-    // Extract detailed error info from RC API response
-    let errorDetail = err.message;
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
     try {
-      if (err.response) {
-        const errBody = await err.response.json();
-        errorDetail = JSON.stringify(errBody, null, 2);
-        console.error('[RC] ❌ API Error Response:', errorDetail);
-      }
-    } catch (_) {}
+      console.log(`[RC] 🔄 Replace attempt ${attempt}/${maxRetries}: POST ${url}`);
+      const resp = await platform.post(url, body);
 
-    console.error(`[RC] ❌ Replace failed: ${errorDetail}`);
-    throw new Error(`RingCentral Replace API failed: ${errorDetail}`);
+      // Read rate limit headers
+      _reportRateLimit(resp);
+
+      // Record heavy call in queue
+      try { require('./queue').recordHeavyCall(); } catch (_) {}
+
+      const result = await resp.json();
+      console.log('[RC] ✅ Phone number replaced successfully');
+      return result;
+    } catch (err) {
+      let statusCode = null;
+      let retryAfter = 60;
+      let errorDetail = err.message;
+
+      try {
+        if (err.response) {
+          statusCode = err.response.status;
+          retryAfter = parseInt(err.response.headers?.get('retry-after')) || 60;
+          const errBody = await err.response.json();
+          errorDetail = JSON.stringify(errBody, null, 2);
+          _reportRateLimit(err.response, statusCode === 429, retryAfter);
+        }
+      } catch (_) {}
+
+      console.warn(`[RC] ⚠️ Replace attempt ${attempt} failed (HTTP ${statusCode}): ${errorDetail}`);
+
+      if (statusCode === 429 && attempt < maxRetries) {
+        console.log(`[RC] 🛑 Rate limited! Waiting ${retryAfter}s...`);
+        await delay(retryAfter * 1000);
+        continue;
+      }
+
+      throw new Error(`RingCentral Replace API failed: ${errorDetail}`);
+    }
   }
 }
 
@@ -297,6 +343,12 @@ async function deletePhoneNumber(phoneNumberId, maxRetries = 3) {
         body,
       });
 
+      // Read rate limit headers
+      _reportRateLimit(resp);
+
+      // Record heavy call in queue
+      try { require('./queue').recordHeavyCall(); } catch (_) {}
+
       // 204 No Content = success (no body to parse)
       // Some RC endpoints return 200 with a body
       let result = null;
@@ -316,9 +368,11 @@ async function deletePhoneNumber(phoneNumberId, maxRetries = 3) {
       try {
         if (err.response) {
           statusCode = err.response.status;
+          const retryAfterHeader = parseInt(err.response.headers?.get('retry-after')) || 60;
           const errBody = await err.response.json();
           errorDetail = JSON.stringify(errBody, null, 2);
           errorCode = errBody?.errorCode || errBody?.errors?.[0]?.errorCode || '';
+          _reportRateLimit(err.response, statusCode === 429, retryAfterHeader);
         }
       } catch (_) {}
 
@@ -335,7 +389,10 @@ async function deletePhoneNumber(phoneNumberId, maxRetries = 3) {
         errorDetail.includes('cannot be deleted');
 
       if (isRetryable && attempt < maxRetries) {
-        const waitTime = baseDelay * Math.pow(2, attempt - 1); // 5s, 10s, 20s
+        // Use Retry-After header for 429, otherwise exponential backoff
+        const waitTime = statusCode === 429
+          ? (parseInt(err.response?.headers?.get('retry-after')) || 60) * 1000
+          : baseDelay * Math.pow(2, attempt - 1);
         console.log(`[RC] ⏳ Waiting ${waitTime / 1000}s before retry...`);
         await delay(waitTime);
         continue;
@@ -454,6 +511,7 @@ async function switchAgentNumber(extensionId, preferredNumberId = null) {
 
 module.exports = {
   initialize,
+  onRateLimitInfo,
   listExtensions,
   getExtensionPhoneNumbers,
   getCurrentDirectNumber,

@@ -46,6 +46,16 @@ async function start() {
     await rc.initialize();
     console.log('[Server] 🔗 RingCentral connected');
 
+    // 3. Wire rate limit callbacks: RC → Queue
+    const queue = require('./services/queue');
+    rc.onRateLimitInfo((info) => {
+      if (info.is429) {
+        queue.handle429(info.retryAfter || 60);
+      }
+      queue.updateRateLimits(info);
+    });
+    console.log('[Server] 📊 Rate limit monitoring active');
+
     // 3. Start the HTTP server
     app.listen(PORT, () => {
       console.log('');

@@ -47,6 +47,17 @@
             <span class="status-dot" id="statusDot"></span>
             <span id="statusText">Connecting...</span>
           </div>
+          <div class="stat-pill queue-pill" id="queuePill" style="display:none">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:14px;height:14px">
+              <line x1="8" y1="6" x2="21" y2="6"></line>
+              <line x1="8" y1="12" x2="21" y2="12"></line>
+              <line x1="8" y1="18" x2="21" y2="18"></line>
+              <line x1="3" y1="6" x2="3.01" y2="6"></line>
+              <line x1="3" y1="12" x2="3.01" y2="12"></line>
+              <line x1="3" y1="18" x2="3.01" y2="18"></line>
+            </svg>
+            <span id="queuePillText">Queue: 0</span>
+          </div>
         </div>
       </div>
     </header>
@@ -114,7 +125,7 @@
               <span class="btn-text">Switch Number</span>
               <div class="btn-loader" style="display:none">
                 <div class="spinner"></div>
-                <span>Processing...</span>
+                <span id="loaderText">Processing...</span>
               </div>
             </button>
           </div>

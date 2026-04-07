@@ -242,6 +242,26 @@ body {
   animation: none;
 }
 
+/* ── Queue Status Pill ── */
+.queue-pill {
+  border-color: rgba(245, 158, 11, 0.4);
+  color: var(--warning);
+  font-weight: 600;
+  gap: 6px;
+  animation: slideUp 0.3s ease-out;
+}
+
+.queue-pill.paused {
+  border-color: rgba(239, 68, 68, 0.4);
+  color: var(--error);
+  animation: pulse-border 1.5s ease-in-out infinite;
+}
+
+@keyframes pulse-border {
+  0%, 100% { border-color: rgba(239, 68, 68, 0.4); }
+  50% { border-color: rgba(239, 68, 68, 0.8); }
+}
+
 @keyframes blink {
   0%, 100% { opacity: 1; }
   50% { opacity: 0.3; }
