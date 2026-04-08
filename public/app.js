@@ -1,20 +1,35 @@
 // ============================================================
 // Number Switcher — Frontend Application Logic
-// Now with job polling for rate-limited queue backend
+// Secured with RingCentral OAuth — No agent dropdown
+//
+// Flow:
+//   1. Check /api/auth/me → authenticated or not
+//   2. If not → show login button
+//   3. If yes → load agent's number + inventory, show switch UI
+//   4. Switch sends POST /api/switch-number (no extensionId in body)
 // ============================================================
 
 const API_BASE = '';
 
 // ── State ──
-let extensions = [];
-let selectedExtension = null;
+let agentInfo = null;       // { extensionId, extensionName, extensionNumber }
 let currentDirectNumber = null;
 let inventoryNumbers = [];
-let activeJobId = null; // currently polling job
+let activeJobId = null;
 let pollTimer = null;
 
 // ── DOM Elements ──
-const agentSelect = document.getElementById('agentSelect');
+const stateLoading = document.getElementById('stateLoading');
+const stateLogin = document.getElementById('stateLogin');
+const stateAuthenticated = document.getElementById('stateAuthenticated');
+const authError = document.getElementById('authError');
+const authErrorText = document.getElementById('authErrorText');
+
+const userAvatar = document.getElementById('userAvatar');
+const userName = document.getElementById('userName');
+const userExt = document.getElementById('userExt');
+const btnLogout = document.getElementById('btnLogout');
+
 const currentNumberDisplay = document.getElementById('currentNumberDisplay');
 const currentNumberValue = document.getElementById('currentNumberValue');
 const currentNumberMeta = document.getElementById('currentNumberMeta');
@@ -24,6 +39,7 @@ const btnSwitch = document.getElementById('btnSwitch');
 const resultArea = document.getElementById('resultArea');
 const resultContent = document.getElementById('resultContent');
 const historyList = document.getElementById('historyList');
+const historyCard = document.getElementById('historyCard');
 const confirmModal = document.getElementById('confirmModal');
 const confirmDetails = document.getElementById('confirmDetails');
 const btnCancel = document.getElementById('btnCancel');
@@ -33,6 +49,8 @@ const statusDot = document.getElementById('statusDot');
 const statusText = document.getElementById('statusText');
 const statToday = document.getElementById('statToday');
 const statTotal = document.getElementById('statTotal');
+const statPillToday = document.getElementById('statPillToday');
+const statPillTotal = document.getElementById('statPillTotal');
 const loaderText = document.getElementById('loaderText');
 const queuePill = document.getElementById('queuePill');
 const queuePillText = document.getElementById('queuePillText');
@@ -42,19 +60,24 @@ const queuePillText = document.getElementById('queuePillText');
 // ──────────────────────────────────────────────
 
 document.addEventListener('DOMContentLoaded', async () => {
-  try {
-    await Promise.all([loadExtensions(), loadHistory()]);
-    setStatus('connected', 'Connected');
-  } catch (error) {
-    console.error('Initialization error:', error);
-    setStatus('error', 'Connection Failed');
+  // Check for auth errors in URL (from failed OAuth callback)
+  const params = new URLSearchParams(window.location.search);
+  const authErr = params.get('auth_error');
+  if (authErr) {
+    showAuthError(authErr);
+    // Clean the URL
+    window.history.replaceState({}, '', '/');
   }
 
-  agentSelect.addEventListener('change', onAgentSelected);
+  // Check authentication status
+  await checkAuth();
+
+  // Event listeners
   btnSwitch.addEventListener('click', onSwitchClicked);
   btnCancel.addEventListener('click', closeModal);
   btnConfirm.addEventListener('click', executeSwitchNumber);
   btnRefreshHistory.addEventListener('click', loadHistory);
+  btnLogout.addEventListener('click', logout);
 
   confirmModal.addEventListener('click', (e) => {
     if (e.target === confirmModal) closeModal();
@@ -65,6 +88,69 @@ document.addEventListener('DOMContentLoaded', async () => {
 });
 
 // ──────────────────────────────────────────────
+//  AUTH CHECK
+// ──────────────────────────────────────────────
+
+async function checkAuth() {
+  showState('loading');
+
+  try {
+    const resp = await fetch(`${API_BASE}/api/auth/me`, {
+      credentials: 'same-origin',
+    });
+
+    if (resp.ok) {
+      const data = await resp.json();
+      if (data.success) {
+        agentInfo = data.data;
+        await onAuthenticated();
+        return;
+      }
+    }
+  } catch (error) {
+    console.error('Auth check failed:', error);
+  }
+
+  // Not authenticated
+  showState('login');
+  setStatus('disconnected', 'Not logged in');
+}
+
+async function onAuthenticated() {
+  // Update UI with agent info
+  userName.textContent = agentInfo.extensionName;
+  userExt.textContent = `Ext. ${agentInfo.extensionNumber}`;
+  userAvatar.textContent = getInitials(agentInfo.extensionName);
+
+  showState('authenticated');
+
+  try {
+    await Promise.all([loadMyNumber(), loadHistory()]);
+    setStatus('connected', `${agentInfo.extensionName}`);
+  } catch (error) {
+    console.error('Failed to load agent data:', error);
+    setStatus('error', 'Error loading data');
+  }
+}
+
+async function logout() {
+  try {
+    await fetch(`${API_BASE}/api/auth/logout`, {
+      method: 'POST',
+      credentials: 'same-origin',
+    });
+  } catch (_) {}
+
+  agentInfo = null;
+  currentDirectNumber = null;
+  inventoryNumbers = [];
+  showState('login');
+  setStatus('disconnected', 'Not logged in');
+  statPillToday.style.display = 'none';
+  statPillTotal.style.display = 'none';
+}
+
+// ──────────────────────────────────────────────
 //  API CALLS
 // ──────────────────────────────────────────────
 
@@ -72,10 +158,20 @@ async function apiCall(method, path, body = null) {
   const opts = {
     method,
     headers: { 'Content-Type': 'application/json' },
+    credentials: 'same-origin',
   };
   if (body) opts.body = JSON.stringify(body);
 
   const resp = await fetch(`${API_BASE}${path}`, opts);
+
+  // Handle 401 — session expired
+  if (resp.status === 401) {
+    agentInfo = null;
+    showState('login');
+    setStatus('disconnected', 'Session expired');
+    throw new Error('Session expired. Please log in again.');
+  }
+
   const data = await resp.json();
 
   if (!resp.ok || !data.success) {
@@ -86,28 +182,37 @@ async function apiCall(method, path, body = null) {
 }
 
 // ──────────────────────────────────────────────
-//  LOAD DATA
+//  LOAD MY DATA
 // ──────────────────────────────────────────────
 
-async function loadExtensions() {
+async function loadMyNumber() {
   try {
-    const { data } = await apiCall('GET', '/api/extensions');
-    extensions = data;
+    const [numbersResp, invResp] = await Promise.all([
+      apiCall('GET', '/api/my-number'),
+      apiCall('GET', '/api/inventory'),
+    ]);
 
-    agentSelect.innerHTML = '<option value="">— Select an agent —</option>';
-    for (const ext of extensions) {
-      const option = document.createElement('option');
-      option.value = ext.id;
-      option.dataset.name = ext.name;
-      option.dataset.number = ext.extensionNumber;
-      option.textContent = `${ext.name} (Ext. ${ext.extensionNumber})`;
-      agentSelect.appendChild(option);
+    currentDirectNumber = numbersResp.data.directNumber;
+    if (currentDirectNumber) {
+      currentNumberValue.textContent = formatPhone(currentDirectNumber.phoneNumber);
+      currentNumberMeta.textContent = `ID: ${currentDirectNumber.id} • ${currentDirectNumber.usageType}`;
+      currentNumberDisplay.style.display = 'block';
+    } else {
+      currentNumberValue.textContent = 'No Direct Number Found';
+      currentNumberMeta.textContent = 'You may not have a Softphone number assigned';
+      currentNumberDisplay.style.display = 'block';
     }
-    agentSelect.disabled = false;
+
+    inventoryNumbers = invResp.data;
+    inventoryCount.textContent = inventoryNumbers.length;
+    inventoryInfo.style.display = 'flex';
+
+    btnSwitch.disabled = !currentDirectNumber || inventoryNumbers.length === 0;
   } catch (error) {
-    agentSelect.innerHTML = '<option value="">Error loading agents</option>';
-    console.error('Failed to load extensions:', error);
-    throw error;
+    console.error('Error loading agent data:', error);
+    currentNumberValue.textContent = 'Error';
+    currentNumberMeta.textContent = error.message;
+    currentNumberDisplay.style.display = 'block';
   }
 }
 
@@ -117,6 +222,8 @@ async function loadHistory() {
 
     statToday.textContent = stats.todayChanges;
     statTotal.textContent = stats.totalChanges;
+    statPillToday.style.display = '';
+    statPillTotal.style.display = '';
 
     if (data.length === 0) {
       historyList.innerHTML = `
@@ -126,8 +233,8 @@ async function loadHistory() {
             <line x1="8" y1="21" x2="16" y2="21"></line>
             <line x1="12" y1="17" x2="12" y2="21"></line>
           </svg>
-          <p>No changes recorded yet</p>
-          <span>Changes will appear here after the first switch</span>
+          <p>No hay cambios registrados</p>
+          <span>Los cambios aparecerán aquí después del primer switch</span>
         </div>
       `;
       return;
@@ -147,7 +254,6 @@ async function loadHistory() {
                 </svg>
               </div>
               <div class="history-details">
-                <div class="history-agent">${escapeHtml(entry.extension_name)} (Ext. ${escapeHtml(entry.extension_number)})</div>
                 <div class="history-numbers">
                   ${formatPhone(entry.old_phone_number)}
                   <span class="arrow">→</span>
@@ -167,7 +273,6 @@ async function loadHistory() {
                 </svg>
               </div>
               <div class="history-details">
-                <div class="history-agent">${escapeHtml(entry.extension_name)}</div>
                 <div class="history-error-msg">${escapeHtml(entry.error_message || 'Unknown error')}</div>
                 <div class="history-time">${time}</div>
               </div>
@@ -185,75 +290,25 @@ async function loadHistory() {
 //  EVENT HANDLERS
 // ──────────────────────────────────────────────
 
-async function onAgentSelected() {
-  const extensionId = agentSelect.value;
-
-  currentDirectNumber = null;
-  inventoryNumbers = [];
-  btnSwitch.disabled = true;
-  resultArea.style.display = 'none';
-
-  if (!extensionId) {
-    currentNumberDisplay.style.display = 'none';
-    inventoryInfo.style.display = 'none';
-    return;
-  }
-
-  selectedExtension = extensions.find((e) => String(e.id) === extensionId);
-
-  try {
-    agentSelect.disabled = true;
-
-    const [numbersResp, invResp] = await Promise.all([
-      apiCall('GET', `/api/extensions/${extensionId}/numbers`),
-      apiCall('GET', '/api/inventory'),
-    ]);
-
-    currentDirectNumber = numbersResp.data.directNumber;
-    if (currentDirectNumber) {
-      currentNumberValue.textContent = formatPhone(currentDirectNumber.phoneNumber);
-      currentNumberMeta.textContent = `ID: ${currentDirectNumber.id} • ${currentDirectNumber.usageType}`;
-      currentNumberDisplay.style.display = 'block';
-    } else {
-      currentNumberValue.textContent = 'No Direct Number Found';
-      currentNumberMeta.textContent = 'This agent may not have a Softphone number assigned';
-      currentNumberDisplay.style.display = 'block';
-    }
-
-    inventoryNumbers = invResp.data;
-    inventoryCount.textContent = inventoryNumbers.length;
-    inventoryInfo.style.display = 'flex';
-
-    btnSwitch.disabled = !currentDirectNumber || inventoryNumbers.length === 0;
-  } catch (error) {
-    console.error('Error loading agent data:', error);
-    currentNumberValue.textContent = 'Error';
-    currentNumberMeta.textContent = error.message;
-    currentNumberDisplay.style.display = 'block';
-  } finally {
-    agentSelect.disabled = false;
-  }
-}
-
 function onSwitchClicked() {
-  if (!selectedExtension || !currentDirectNumber) return;
+  if (!agentInfo || !currentDirectNumber) return;
 
   confirmDetails.innerHTML = `
     <div class="detail-row">
-      <span class="detail-label">Agent</span>
-      <span class="detail-value">${escapeHtml(selectedExtension.name)}</span>
+      <span class="detail-label">Agente</span>
+      <span class="detail-value">${escapeHtml(agentInfo.extensionName)}</span>
     </div>
     <div class="detail-row">
-      <span class="detail-label">Extension</span>
-      <span class="detail-value">${escapeHtml(selectedExtension.extensionNumber)}</span>
+      <span class="detail-label">Extensión</span>
+      <span class="detail-value">${escapeHtml(agentInfo.extensionNumber)}</span>
     </div>
     <div class="detail-row">
-      <span class="detail-label">Current Number</span>
+      <span class="detail-label">Número Actual</span>
       <span class="detail-value">${formatPhone(currentDirectNumber.phoneNumber)}</span>
     </div>
     <div class="detail-row">
-      <span class="detail-label">New Number</span>
-      <span class="detail-value" style="color: var(--accent-secondary)">Random from inventory (${inventoryNumbers.length} available)</span>
+      <span class="detail-label">Nuevo Número</span>
+      <span class="detail-value" style="color: var(--accent-secondary)">Aleatorio del inventario (${inventoryNumbers.length} disponibles)</span>
     </div>
   `;
   confirmModal.style.display = 'flex';
@@ -278,37 +333,31 @@ async function executeSwitchNumber() {
   btnIcon.style.display = 'none';
   btnLoader.style.display = 'flex';
   btnSwitch.disabled = true;
-  agentSelect.disabled = true;
   resultArea.style.display = 'none';
   loaderText.textContent = 'Enqueuing...';
 
   try {
-    // Step 1: Enqueue the job (returns immediately)
-    const { data } = await apiCall('POST', '/api/switch-number', {
-      extensionId: String(selectedExtension.id),
-      extensionName: selectedExtension.name,
-      extensionNumber: selectedExtension.extensionNumber,
-    });
+    // Enqueue the job — NO extensionId in the body!
+    // The backend reads it from the signed JWT cookie.
+    const { data } = await apiCall('POST', '/api/switch-number', {});
 
     activeJobId = data.jobId;
 
-    // Show queue position
     if (data.position > 1) {
-      loaderText.textContent = `Queued (position ${data.position})...`;
+      loaderText.textContent = `En cola (posición ${data.position})...`;
     } else {
-      loaderText.textContent = 'Processing...';
+      loaderText.textContent = 'Procesando...';
     }
 
-    // Update queue pill
     updateQueuePill(data.queueInfo);
 
-    // Step 2: Poll for result
+    // Poll for result
     const result = await pollJobUntilDone(data.jobId);
 
     if (result.status === 'completed' && result.result) {
       showSuccessResult(result.result);
       currentNumberValue.textContent = formatPhone(result.result.newNumber);
-      currentNumberMeta.textContent = 'Just updated';
+      currentNumberMeta.textContent = 'Actualizado ahora';
       await loadHistory();
     } else if (result.status === 'failed') {
       showErrorResult(result.error || 'Unknown error');
@@ -325,8 +374,7 @@ async function executeSwitchNumber() {
     btnIcon.style.display = 'block';
     btnLoader.style.display = 'none';
     btnSwitch.disabled = false;
-    agentSelect.disabled = false;
-    loaderText.textContent = 'Processing...';
+    loaderText.textContent = 'Procesando...';
     updateQueuePill(null);
   }
 }
@@ -350,15 +398,14 @@ function pollJobUntilDone(jobId) {
       try {
         const { data } = await apiCall('GET', `/api/jobs/${jobId}`);
 
-        // Update UI based on status
         if (data.status === 'queued') {
           loaderText.textContent = data.position > 0
-            ? `Queued (position ${data.position})...`
-            : 'Queued...';
+            ? `En cola (posición ${data.position})...`
+            : 'En cola...';
           updateQueuePill(data.queueInfo);
 
         } else if (data.status === 'processing') {
-          loaderText.textContent = 'Switching number...';
+          loaderText.textContent = 'Cambiando número...';
 
         } else if (data.status === 'completed') {
           resolve(data);
@@ -369,11 +416,9 @@ function pollJobUntilDone(jobId) {
           return;
         }
 
-        // Schedule next poll
         pollTimer = setTimeout(poll, POLL_INTERVAL);
 
       } catch (error) {
-        // Network error — retry a few more times
         if (attempts < MAX_ATTEMPTS) {
           pollTimer = setTimeout(poll, POLL_INTERVAL * 2);
         } else {
@@ -403,7 +448,7 @@ function showSuccessResult(result) {
          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="width:14px;height:14px">
            <polyline points="20 6 9 17 4 12"></polyline>
          </svg>
-         Old number permanently deleted
+         Número anterior eliminado permanentemente
        </div>`
     : `<div class="deletion-badge warning">
          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:14px;height:14px">
@@ -411,7 +456,7 @@ function showSuccessResult(result) {
            <line x1="12" y1="9" x2="12" y2="13"></line>
            <line x1="12" y1="17" x2="12.01" y2="17"></line>
          </svg>
-         Old number may still be in inventory
+         El número anterior puede seguir en inventario
        </div>`;
 
   resultContent.innerHTML = `
@@ -421,7 +466,7 @@ function showSuccessResult(result) {
         <polyline points="22 4 12 14.01 9 11.01"></polyline>
       </svg>
       <div class="result-text">
-        <h4>Number Switched Successfully!</h4>
+        <h4>¡Número Cambiado Exitosamente!</h4>
         <p>${escapeHtml(result.message)}</p>
       </div>
     </div>
@@ -444,12 +489,28 @@ function showErrorResult(message) {
         <line x1="9" y1="9" x2="15" y2="15"></line>
       </svg>
       <div class="result-text">
-        <h4>Switch Failed</h4>
+        <h4>Cambio Fallido</h4>
         <p>${escapeHtml(message)}</p>
       </div>
     </div>
   `;
   resultArea.style.display = 'block';
+}
+
+// ──────────────────────────────────────────────
+//  UI STATE MANAGEMENT
+// ──────────────────────────────────────────────
+
+function showState(state) {
+  stateLoading.style.display = state === 'loading' ? '' : 'none';
+  stateLogin.style.display = state === 'login' ? '' : 'none';
+  stateAuthenticated.style.display = state === 'authenticated' ? '' : 'none';
+  historyCard.style.display = state === 'authenticated' ? '' : 'none';
+}
+
+function showAuthError(message) {
+  authError.style.display = 'flex';
+  authErrorText.textContent = message;
 }
 
 // ──────────────────────────────────────────────
@@ -483,6 +544,15 @@ function setStatus(state, text) {
   statusText.textContent = text;
 }
 
+function getInitials(name) {
+  if (!name) return '?';
+  const parts = name.trim().split(/\s+/);
+  if (parts.length >= 2) {
+    return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
+  }
+  return parts[0].substring(0, 2).toUpperCase();
+}
+
 function formatPhone(phone) {
   if (!phone) return '—';
   const cleaned = phone.replace(/\D/g, '');
@@ -501,15 +571,15 @@ function formatTime(dateStr) {
   const now = new Date();
   const diff = now - date;
 
-  if (diff < 60000) return 'Just now';
-  if (diff < 3600000) return `${Math.floor(diff / 60000)}m ago`;
+  if (diff < 60000) return 'Ahora mismo';
+  if (diff < 3600000) return `hace ${Math.floor(diff / 60000)}m`;
   if (date.toDateString() === now.toDateString()) {
     return date.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
   }
   const yesterday = new Date(now);
   yesterday.setDate(yesterday.getDate() - 1);
   if (date.toDateString() === yesterday.toDateString()) {
-    return `Yesterday ${date.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}`;
+    return `Ayer ${date.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}`;
   }
   return date.toLocaleDateString('en-US', {
     month: 'short',

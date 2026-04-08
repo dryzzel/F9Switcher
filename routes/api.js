@@ -1,6 +1,11 @@
 // ============================================================
 // API Routes — REST endpoints for the Number Switcher
-// Now with job-based async processing via queue
+//
+// SECURITY: All routes in this file are protected by requireAuth.
+// req.agent = { extensionId, extensionName, extensionNumber }
+// is guaranteed to be set from the verified JWT session cookie.
+//
+// The extensionId is NEVER received from the client.
 // ============================================================
 const express = require('express');
 const router = express.Router();
@@ -9,30 +14,14 @@ const db = require('../services/database');
 const queue = require('../services/queue');
 
 // ──────────────────────────────────────────────
-//  GET /api/extensions
-//  List all user extensions (for the agent dropdown)
+//  GET /api/my-number
+//  Get the authenticated agent's current phone number.
+//  Uses req.agent.extensionId from the JWT — NOT from params.
 // ──────────────────────────────────────────────
-router.get('/extensions', async (req, res) => {
+router.get('/my-number', async (req, res) => {
   try {
-    const extensions = await rc.listExtensions();
-    res.json({ success: true, data: extensions });
-  } catch (error) {
-    console.error('[API] Error listing extensions:', error.message);
-    res.status(500).json({
-      success: false,
-      error: 'Failed to list extensions',
-      details: error.message,
-    });
-  }
-});
-
-// ──────────────────────────────────────────────
-//  GET /api/extensions/:id/numbers
-//  Get phone numbers for a specific extension
-// ──────────────────────────────────────────────
-router.get('/extensions/:id/numbers', async (req, res) => {
-  try {
-    const numbers = await rc.getExtensionPhoneNumbers(req.params.id);
+    const { extensionId } = req.agent;
+    const numbers = await rc.getExtensionPhoneNumbers(extensionId);
     const directNumber = numbers.find((n) => n.usageType === 'DirectNumber');
     res.json({
       success: true,
@@ -42,10 +31,10 @@ router.get('/extensions/:id/numbers', async (req, res) => {
       },
     });
   } catch (error) {
-    console.error('[API] Error getting extension numbers:', error.message);
+    console.error('[API] Error getting agent numbers:', error.message);
     res.status(500).json({
       success: false,
-      error: 'Failed to get extension phone numbers',
+      error: 'Failed to get your phone numbers',
       details: error.message,
     });
   }
@@ -78,26 +67,21 @@ router.get('/inventory', async (req, res) => {
 //  Enqueue a phone number switch job.
 //  Returns immediately with jobId for polling.
 //
-//  Body: {
-//    extensionId: "123456",
-//    extensionName: "John Doe",
-//    extensionNumber: "101",
-//    preferredNumberId: "789" (optional)
+//  ⚠️ SECURITY: extensionId is extracted from the JWT session,
+//  NOT from the request body. This makes it cryptographically
+//  impossible for an agent to switch another agent's number.
+//
+//  Body (optional): {
+//    preferredNumberId: "789"
 //  }
 // ──────────────────────────────────────────────
 router.post('/switch-number', (req, res) => {
-  const { extensionId, extensionName, extensionNumber, preferredNumberId } =
-    req.body;
-
-  if (!extensionId) {
-    return res.status(400).json({
-      success: false,
-      error: 'extensionId is required',
-    });
-  }
+  // extensionId comes ONLY from the verified JWT — never from the client
+  const { extensionId, extensionName, extensionNumber } = req.agent;
+  const { preferredNumberId } = req.body;
 
   console.log(
-    `[API] 🚀 Switch requested for ${extensionName || extensionId} → enqueuing`
+    `[API] 🚀 Switch requested by ${extensionName} (${extensionId}) → enqueuing`
   );
 
   const job = queue.enqueue({
@@ -174,13 +158,15 @@ router.get('/queue/status', (req, res) => {
 
 // ──────────────────────────────────────────────
 //  GET /api/history
-//  Get the change history log
-//  Query: ?limit=50&extensionId=123
+//  Get the change history for the AUTHENTICATED AGENT only.
+//  Each agent can only see their own history.
+//  Query: ?limit=50
 // ──────────────────────────────────────────────
 router.get('/history', (req, res) => {
   try {
     const limit = parseInt(req.query.limit) || 50;
-    const extensionId = req.query.extensionId || null;
+    // Filter by the authenticated agent's extensionId — not a client param
+    const extensionId = req.agent.extensionId;
     const history = db.getHistory(limit, extensionId);
     const stats = db.getStats();
 

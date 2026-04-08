@@ -9,9 +9,11 @@
   },
   "dependencies": {
     "@ringcentral/sdk": "^4.7.3",
-    "sql.js": "^1.11.0",
+    "cookie-parser": "^1.4.7",
     "cors": "^2.8.5",
     "dotenv": "^16.4.7",
-    "express": "^4.21.1"
+    "express": "^4.21.1",
+    "jsonwebtoken": "^9.0.3",
+    "sql.js": "^1.11.0"
   }
 }

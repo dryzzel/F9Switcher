@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <meta name="description" content="RingCentral Agent Number Switcher — Instantly change agent softphone numbers">
+  <meta name="description" content="RingCentral Agent Number Switcher — Securely change your softphone number">
   <title>Number Switcher | RingCentral</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -35,11 +35,11 @@
           </div>
         </div>
         <div class="header-stats" id="headerStats">
-          <div class="stat-pill">
+          <div class="stat-pill" id="statPillToday" style="display:none">
             <span class="stat-label">Today</span>
             <span class="stat-value" id="statToday">—</span>
           </div>
-          <div class="stat-pill">
+          <div class="stat-pill" id="statPillTotal" style="display:none">
             <span class="stat-label">Total</span>
             <span class="stat-value" id="statTotal">—</span>
           </div>
@@ -65,86 +65,118 @@
     <!-- ═══════ MAIN CONTENT ═══════ -->
     <main class="main-content">
       <div class="grid-layout">
+
         <!-- ──── LEFT COLUMN: SWITCHER ──── -->
         <section class="card switcher-card" id="switcherCard">
-          <div class="card-header">
-            <h2>
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="icon">
-                <polyline points="17 1 21 5 17 9"></polyline>
-                <path d="M3 11V9a4 4 0 0 1 4-4h14"></path>
-                <polyline points="7 23 3 19 7 15"></polyline>
-                <path d="M21 13v2a4 4 0 0 1-4 4H3"></path>
-              </svg>
-              Switch Number
-            </h2>
-            <span class="badge">Live</span>
+
+          <!-- ══ STATE: LOADING ══ -->
+          <div id="stateLoading" class="auth-state">
+            <div class="card-body" style="text-align:center; padding: 3rem 2rem;">
+              <div class="spinner" style="margin: 0 auto 1rem;"></div>
+              <p style="color: var(--text-secondary);">Checking authentication...</p>
+            </div>
           </div>
 
-          <div class="card-body">
-            <!-- Step 1: Select Agent -->
-            <div class="form-group">
-              <label for="agentSelect">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="label-icon">
-                  <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path>
-                  <circle cx="12" cy="7" r="4"></circle>
+          <!-- ══ STATE: NOT AUTHENTICATED ══ -->
+          <div id="stateLogin" class="auth-state" style="display:none">
+            <div class="card-body login-body">
+              <div class="login-icon">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                  <rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect>
+                  <path d="M7 11V7a5 5 0 0 1 10 0v4"></path>
                 </svg>
-                Select Agent
-              </label>
-              <div class="select-wrapper">
-                <select id="agentSelect" disabled>
-                  <option value="">Loading agents...</option>
-                </select>
-                <div class="select-arrow">
-                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"></polyline></svg>
+              </div>
+              <h2 class="login-title">Autenticación Requerida</h2>
+              <p class="login-subtitle">Para cambiar tu número de teléfono, inicia sesión con tu cuenta de RingCentral.</p>
+              <a href="/api/auth/login" class="btn-rc-login" id="btnLogin">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="btn-icon-sm">
+                  <path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"></path>
+                  <polyline points="10 17 15 12 10 7"></polyline>
+                  <line x1="15" y1="12" x2="3" y2="12"></line>
+                </svg>
+                Login with RingCentral
+              </a>
+              <p class="login-hint">Serás redirigido a RingCentral para iniciar sesión de forma segura.</p>
+
+              <!-- Auth error display -->
+              <div class="auth-error" id="authError" style="display:none">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:16px;height:16px;flex-shrink:0">
+                  <circle cx="12" cy="12" r="10"></circle>
+                  <line x1="15" y1="9" x2="9" y2="15"></line>
+                  <line x1="9" y1="9" x2="15" y2="15"></line>
+                </svg>
+                <span id="authErrorText"></span>
+              </div>
+            </div>
+          </div>
+
+          <!-- ══ STATE: AUTHENTICATED ══ -->
+          <div id="stateAuthenticated" class="auth-state" style="display:none">
+            <div class="card-header">
+              <div class="user-info">
+                <div class="user-avatar" id="userAvatar">?</div>
+                <div>
+                  <h2 id="userName">—</h2>
+                  <span class="user-ext" id="userExt">Ext. —</span>
                 </div>
               </div>
+              <button class="btn-logout" id="btnLogout" title="Cerrar sesión">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"></path>
+                  <polyline points="16 17 21 12 16 7"></polyline>
+                  <line x1="21" y1="12" x2="9" y2="12"></line>
+                </svg>
+                Logout
+              </button>
             </div>
 
-            <!-- Current Number Display -->
-            <div class="number-display" id="currentNumberDisplay" style="display:none">
-              <div class="number-label">Current Number</div>
-              <div class="number-value" id="currentNumberValue">—</div>
-              <div class="number-meta" id="currentNumberMeta"></div>
-            </div>
-
-            <!-- Inventory Info -->
-            <div class="inventory-info" id="inventoryInfo" style="display:none">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="icon-sm">
-                <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"></path>
-              </svg>
-              <span id="inventoryCount">0</span> numbers available in inventory
-            </div>
-
-            <!-- Switch Button -->
-            <button class="btn-switch" id="btnSwitch" disabled>
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="btn-icon">
-                <polyline points="23 4 23 10 17 10"></polyline>
-                <polyline points="1 20 1 14 7 14"></polyline>
-                <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path>
-              </svg>
-              <span class="btn-text">Switch Number</span>
-              <div class="btn-loader" style="display:none">
-                <div class="spinner"></div>
-                <span id="loaderText">Processing...</span>
+            <div class="card-body">
+              <!-- Current Number Display -->
+              <div class="number-display" id="currentNumberDisplay" style="display:none">
+                <div class="number-label">Tu Número Actual</div>
+                <div class="number-value" id="currentNumberValue">—</div>
+                <div class="number-meta" id="currentNumberMeta"></div>
               </div>
-            </button>
-          </div>
 
-          <!-- Result Area -->
-          <div class="result-area" id="resultArea" style="display:none">
-            <div class="result-content" id="resultContent"></div>
+              <!-- Inventory Info -->
+              <div class="inventory-info" id="inventoryInfo" style="display:none">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="icon-sm">
+                  <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"></path>
+                </svg>
+                <span id="inventoryCount">0</span> números disponibles en inventario
+              </div>
+
+              <!-- Switch Button -->
+              <button class="btn-switch" id="btnSwitch" disabled>
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="btn-icon">
+                  <polyline points="23 4 23 10 17 10"></polyline>
+                  <polyline points="1 20 1 14 7 14"></polyline>
+                  <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path>
+                </svg>
+                <span class="btn-text">Cambiar Mi Número</span>
+                <div class="btn-loader" style="display:none">
+                  <div class="spinner"></div>
+                  <span id="loaderText">Processing...</span>
+                </div>
+              </button>
+            </div>
+
+            <!-- Result Area -->
+            <div class="result-area" id="resultArea" style="display:none">
+              <div class="result-content" id="resultContent"></div>
+            </div>
           </div>
         </section>
 
         <!-- ──── RIGHT COLUMN: HISTORY ──── -->
-        <section class="card history-card">
+        <section class="card history-card" id="historyCard">
           <div class="card-header">
             <h2>
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="icon">
                 <circle cx="12" cy="12" r="10"></circle>
                 <polyline points="12 6 12 12 16 14"></polyline>
               </svg>
-              Change History
+              Mi Historial
             </h2>
             <button class="btn-refresh" id="btnRefreshHistory" title="Refresh history">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -181,16 +213,16 @@
           <line x1="12" y1="17" x2="12.01" y2="17"></line>
         </svg>
       </div>
-      <h3>Confirm Number Switch</h3>
-      <p id="confirmMessage">Are you sure you want to change this agent's phone number?</p>
+      <h3>Confirmar Cambio de Número</h3>
+      <p id="confirmMessage">¿Estás seguro de que quieres cambiar tu número de teléfono?</p>
       <div class="confirm-details" id="confirmDetails"></div>
       <div class="modal-actions">
-        <button class="btn-cancel" id="btnCancel">Cancel</button>
+        <button class="btn-cancel" id="btnCancel">Cancelar</button>
         <button class="btn-confirm" id="btnConfirm">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="btn-icon-sm">
             <polyline points="20 6 9 17 4 12"></polyline>
           </svg>
-          Confirm Switch
+          Confirmar Cambio
         </button>
       </div>
     </div>
