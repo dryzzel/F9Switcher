@@ -506,6 +506,88 @@ async function switchAgentNumber(extensionId, preferredNumberId = null) {
 }
 
 // ──────────────────────────────────────────────
+//  SMS / A2P 10DLC — TCR Campaign Registration
+// ──────────────────────────────────────────────
+
+/**
+ * List all TCR Brands registered on the account.
+ * GET /restapi/v1.0/account/~/sms-registration-brands
+ * Used for auto-discovery when RC_TCR_BRAND_ID is not set.
+ * @returns {Array} [{ id, name, status, externalId, ... }]
+ */
+async function listTcrBrands() {
+  const p = await ensurePlatform();
+  const resp = await p.get('/restapi/v1.0/account/~/sms-registration-brands');
+  _reportRateLimit(resp);
+  const data = await resp.json();
+  return data.records || [];
+}
+
+/**
+ * List all TCR Campaigns for a specific Brand.
+ * GET /restapi/v1.0/account/~/sms-registration-brands/{brandId}/campaigns
+ * @param {string|number} brandId — TCR Brand ID
+ * @returns {Array} [{ id, name, status, externalId, useCases, ... }]
+ */
+async function listTcrCampaigns(brandId) {
+  const p = await ensurePlatform();
+  const resp = await p.get(
+    `/restapi/v1.0/account/~/sms-registration-brands/${brandId}/campaigns`
+  );
+  _reportRateLimit(resp);
+  const data = await resp.json();
+  return data.records || [];
+}
+
+/**
+ * Link a phone number to a TCR Campaign for SMS activation.
+ * POST /restapi/v1.0/account/~/sms-registration-brands/{brandId}/campaigns/{campaignId}/submit-phone-numbers
+ *
+ * ⚠️ Requires EditAccounts scope (admin token).
+ * ⚠️ SMS activation may take up to 48 hours after linking.
+ *
+ * @param {string|number} brandId — TCR Brand ID
+ * @param {string|number} campaignId — TCR Campaign ID
+ * @param {string} phoneNumberE164 — Phone number in E.164 format (e.g. "+16505550111")
+ * @returns {boolean} true if successful (200 OK)
+ */
+async function linkPhoneNumberToCampaign(brandId, campaignId, phoneNumberE164) {
+  const p = await ensurePlatform();
+  console.log(`[RC-SMS] 📱 Linking ${phoneNumberE164} to campaign ${campaignId}...`);
+  const resp = await p.post(
+    `/restapi/v1.0/account/~/sms-registration-brands/${brandId}/campaigns/${campaignId}/submit-phone-numbers`,
+    { phoneNumbers: [phoneNumberE164] }
+  );
+  _reportRateLimit(resp);
+  console.log(`[RC-SMS] ✅ Number ${phoneNumberE164} linked to campaign ${campaignId}`);
+  return true;
+}
+
+/**
+ * Read the SMS configuration (TCR brand/campaign info) for a phone number.
+ * GET /restapi/v1.0/account/~/extension/{extId}/phone-number/{phoneNumberId}/sms-configuration
+ *
+ * @param {string} extensionId — Extension ID
+ * @param {string} phoneNumberId — Phone number resource ID
+ * @returns {{ smsCampaignInfo, smsBrandInfo }|null} — null if no SMS config
+ */
+async function getSmsConfiguration(extensionId, phoneNumberId) {
+  const p = await ensurePlatform();
+  try {
+    const resp = await p.get(
+      `/restapi/v1.0/account/~/extension/${extensionId}/phone-number/${phoneNumberId}/sms-configuration`
+    );
+    _reportRateLimit(resp);
+    return await resp.json();
+  } catch (err) {
+    // If the number has no SMS config, RC may return 404 or empty
+    const statusCode = err.response?.status || err.apiResponse?.status;
+    if (statusCode === 404 || statusCode === 400) return null;
+    throw err;
+  }
+}
+
+// ──────────────────────────────────────────────
 //  EXPORTS
 // ──────────────────────────────────────────────
 
@@ -519,4 +601,8 @@ module.exports = {
   replacePhoneNumber,
   deletePhoneNumber,
   switchAgentNumber,
+  listTcrBrands,
+  listTcrCampaigns,
+  linkPhoneNumberToCampaign,
+  getSmsConfiguration,
 };

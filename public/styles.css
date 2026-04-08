@@ -766,6 +766,144 @@ body {
   color: var(--warning);
 }
 
+/* ── SMS Panel ── */
+.sms-panel {
+  margin-top: 16px;
+  background: rgba(99, 102, 241, 0.06);
+  border: 1px solid rgba(99, 102, 241, 0.2);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+  animation: slideUp 0.4s ease-out;
+}
+
+.sms-panel-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 16px;
+  background: rgba(99, 102, 241, 0.08);
+  border-bottom: 1px solid rgba(99, 102, 241, 0.15);
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--accent-primary);
+}
+
+.sms-panel-body {
+  padding: 14px 16px;
+}
+
+.sms-hint {
+  font-size: 0.82rem;
+  color: var(--text-secondary);
+  margin-bottom: 12px;
+}
+
+.sms-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.sms-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 16px;
+  border: none;
+  border-radius: var(--radius-sm);
+  font-size: 0.78rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.sms-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.sms-btn.activate {
+  background: linear-gradient(135deg, var(--accent-primary), #8b5cf6);
+  color: white;
+}
+
+.sms-btn.activate:hover:not(:disabled) {
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(99, 102, 241, 0.35);
+}
+
+.sms-btn.check {
+  background: var(--bg-input);
+  border: 1px solid var(--border-medium);
+  color: var(--text-secondary);
+}
+
+.sms-btn.check:hover:not(:disabled) {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.sms-note {
+  font-size: 0.72rem;
+  color: var(--text-muted);
+  margin-top: 10px;
+}
+
+.sms-status-result {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 12px;
+  border-radius: var(--radius-sm);
+  font-size: 0.82rem;
+}
+
+.sms-status-result strong {
+  display: block;
+  margin-bottom: 2px;
+}
+
+.sms-status-result p {
+  margin: 2px 0;
+  color: var(--text-secondary);
+  font-size: 0.78rem;
+}
+
+.sms-status-result.confirmed {
+  background: var(--success-bg);
+  border: 1px solid var(--success-border);
+  color: var(--success);
+}
+
+.sms-status-result.pending {
+  background: var(--warning-bg);
+  border: 1px solid rgba(245, 158, 11, 0.3);
+  color: var(--warning);
+}
+
+.sms-status-result.inactive {
+  background: var(--bg-input);
+  border: 1px solid var(--border-medium);
+  color: var(--text-muted);
+}
+
+.sms-status-result.error {
+  background: rgba(239, 68, 68, 0.08);
+  border: 1px solid rgba(239, 68, 68, 0.3);
+  color: var(--error);
+}
+
+.sms-phone {
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-primary) !important;
+}
+
+.sms-detail {
+  font-size: 0.72rem !important;
+  color: var(--text-muted) !important;
+}
+
 /* ── History ── */
 .history-card {
   display: flex;

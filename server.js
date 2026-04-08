@@ -46,6 +46,54 @@ app.get('*', (req, res) => {
 });
 
 // ──────────────────────────────────────────────
+//  SMS TCR AUTO-DISCOVERY
+// ──────────────────────────────────────────────
+async function discoverTcrConfig() {
+  const brandId = process.env.RC_TCR_BRAND_ID;
+  const campaignId = process.env.RC_TCR_CAMPAIGN_ID;
+
+  if (brandId && campaignId) {
+    console.log(`[SMS] ✅ TCR Campaign configured (Brand: ${brandId}, Campaign: ${campaignId})`);
+    return;
+  }
+
+  console.log('[SMS] ⚠️  RC_TCR_BRAND_ID / RC_TCR_CAMPAIGN_ID not set. Running auto-discovery...');
+  try {
+    const brands = await rc.listTcrBrands();
+    if (!brands.length) {
+      console.log('[SMS] ⚠️  No TCR Brands found. SMS activation will be unavailable.');
+      return;
+    }
+
+    console.log(`[SMS] 📋 Found ${brands.length} TCR Brand(s):`);
+    for (const b of brands) {
+      console.log(`  ▸ Brand ID: ${b.id} | Name: "${b.name || 'N/A'}" | Status: ${b.status || 'N/A'} | External: ${b.externalId || 'N/A'}`);
+      try {
+        const campaigns = await rc.listTcrCampaigns(b.id);
+        if (campaigns.length) {
+          for (const c of campaigns) {
+            console.log(`    ▸ Campaign ID: ${c.id} | Name: "${c.name || c.externalId || 'N/A'}" | Status: ${c.status || 'N/A'}`);
+          }
+        } else {
+          console.log('    (No campaigns found for this brand)');
+        }
+      } catch (err) {
+        console.log(`    (Could not list campaigns: ${err.message})`);
+      }
+    }
+
+    console.log('');
+    console.log('[SMS] 👉 Copy the Brand ID and Campaign ID above to your .env:');
+    console.log('         RC_TCR_BRAND_ID=<brand_id>');
+    console.log('         RC_TCR_CAMPAIGN_ID=<campaign_id>');
+    console.log('');
+  } catch (err) {
+    console.warn(`[SMS] ⚠️  Auto-discovery failed: ${err.message}`);
+    console.warn('[SMS]    SMS activation will be unavailable until configured.');
+  }
+}
+
+// ──────────────────────────────────────────────
 //  STARTUP
 // ──────────────────────────────────────────────
 async function start() {
@@ -68,12 +116,16 @@ async function start() {
     });
     console.log('[Server] 📊 Rate limit monitoring active');
 
-    // 4. Start the HTTP server
+    // 4. SMS TCR Auto-Discovery / Validation
+    await discoverTcrConfig();
+
+    // 5. Start the HTTP server
     app.listen(PORT, () => {
       console.log('');
       console.log('═══════════════════════════════════════════════');
       console.log('  🔄 RingCentral Number Switcher');
       console.log('  🔐 OAuth Security: ENABLED');
+      console.log('  📱 SMS Activation: ' + (process.env.RC_TCR_BRAND_ID && process.env.RC_TCR_CAMPAIGN_ID ? 'ENABLED' : 'NOT CONFIGURED'));
       console.log(`  🌐 http://localhost:${PORT}`);
       console.log('═══════════════════════════════════════════════');
       console.log('');

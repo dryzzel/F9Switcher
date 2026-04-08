@@ -128,10 +128,56 @@ async function onAuthenticated() {
   try {
     await Promise.all([loadMyNumber(), loadHistory()]);
     setStatus('connected', `${agentInfo.extensionName}`);
+
+    // Restore cooldown timer & SMS panel if active
+    await restoreCooldownAndSms();
   } catch (error) {
     console.error('Failed to load agent data:', error);
     setStatus('error', 'Error loading data');
   }
+}
+
+/**
+ * Restore cooldown timer and SMS panel state on page load/refresh.
+ * Called after authentication to ensure persistent UI state.
+ */
+async function restoreCooldownAndSms() {
+  try {
+    const { data } = await apiCall('GET', '/api/cooldown-status');
+    if (data.active && data.cooldownRemainingSec > 0) {
+      // Restore the cooldown timer on the switch button
+      startCooldownTimer(data.cooldownRemainingSec);
+
+      // Show SMS panel since a recent switch happened
+      showSmsPanel();
+    }
+  } catch (err) {
+    // Silently ignore — cooldown check is non-critical
+    console.warn('Cooldown check failed:', err.message);
+  }
+}
+
+/**
+ * Show the SMS panel in the result area (for restore on refresh).
+ */
+function showSmsPanel() {
+  resultContent.innerHTML = `
+    <div class="sms-panel" id="smsPanel">
+      <div class="sms-panel-header">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:18px;height:18px">
+          <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path>
+        </svg>
+        <span>Mensajería SMS</span>
+      </div>
+      <div class="sms-panel-body" id="smsPanelBody">
+        <p class="sms-hint">Verificando estado SMS de tu número...</p>
+      </div>
+    </div>
+  `;
+  resultArea.style.display = 'block';
+
+  // Automatically check SMS status
+  checkSmsStatus();
 }
 
 async function logout() {
@@ -496,6 +542,33 @@ function showSuccessResult(result) {
       <span class="new-num">${formatPhone(result.newNumber)}</span>
     </div>
     ${deletionBadge}
+    <div class="sms-panel" id="smsPanel">
+      <div class="sms-panel-header">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:18px;height:18px">
+          <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path>
+        </svg>
+        <span>Mensajería SMS</span>
+      </div>
+      <div class="sms-panel-body" id="smsPanelBody">
+        <p class="sms-hint">¿Deseas activar SMS para este nuevo número?</p>
+        <div class="sms-actions">
+          <button class="sms-btn activate" onclick="activateSms()" id="btnActivateSms">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:16px;height:16px">
+              <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path>
+            </svg>
+            Activar SMS
+          </button>
+          <button class="sms-btn check" onclick="checkSmsStatus()" id="btnCheckSms">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:16px;height:16px">
+              <circle cx="11" cy="11" r="8"></circle>
+              <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+            </svg>
+            Verificar Estado
+          </button>
+        </div>
+        <p class="sms-note">ℹ️ La activación puede tardar hasta 48 horas.</p>
+      </div>
+    </div>
   `;
   resultArea.style.display = 'block';
 }
@@ -515,6 +588,136 @@ function showErrorResult(message) {
     </div>
   `;
   resultArea.style.display = 'block';
+}
+
+// ──────────────────────────────────────────────
+//  SMS ACTIVATION
+// ──────────────────────────────────────────────
+
+/**
+ * Request SMS activation for the agent's current number.
+ * Calls POST /api/sms-activation to link the number to the TCR campaign.
+ */
+async function activateSms() {
+  const btn = document.getElementById('btnActivateSms');
+  const body = document.getElementById('smsPanelBody');
+  if (!btn) return;
+
+  btn.disabled = true;
+  btn.textContent = 'Enviando...';
+
+  try {
+    const { data } = await apiCall('POST', '/api/sms-activation');
+
+    body.innerHTML = `
+      <div class="sms-status-result pending">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:20px;height:20px">
+          <circle cx="12" cy="12" r="10"></circle>
+          <polyline points="12 6 12 12 16 14"></polyline>
+        </svg>
+        <div>
+          <strong>Solicitud Enviada</strong>
+          <p>${escapeHtml(data.message)}</p>
+          <p class="sms-phone">${formatPhone(data.phoneNumber)}</p>
+        </div>
+      </div>
+      <button class="sms-btn check" onclick="checkSmsStatus()" style="margin-top:8px">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:16px;height:16px">
+          <circle cx="11" cy="11" r="8"></circle>
+          <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+        </svg>
+        Verificar Estado
+      </button>
+    `;
+  } catch (error) {
+    body.innerHTML = `
+      <div class="sms-status-result error">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:20px;height:20px">
+          <circle cx="12" cy="12" r="10"></circle>
+          <line x1="15" y1="9" x2="9" y2="15"></line>
+          <line x1="9" y1="9" x2="15" y2="15"></line>
+        </svg>
+        <div>
+          <strong>Error al Activar SMS</strong>
+          <p>${escapeHtml(error.message)}</p>
+        </div>
+      </div>
+    `;
+  }
+}
+
+/**
+ * Check the current SMS status for the agent's phone number.
+ * Calls GET /api/sms-status.
+ */
+async function checkSmsStatus() {
+  const body = document.getElementById('smsPanelBody');
+  if (!body) return;
+
+  body.innerHTML = '<p class="sms-hint">Verificando estado SMS...</p>';
+
+  try {
+    const { data } = await apiCall('GET', '/api/sms-status');
+
+    if (data.smsEnabled) {
+      const campaign = data.campaign;
+      const useCases = campaign?.useCases?.join(', ') || 'N/A';
+      body.innerHTML = `
+        <div class="sms-status-result confirmed">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="width:20px;height:20px">
+            <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path>
+            <polyline points="22 4 12 14.01 9 11.01"></polyline>
+          </svg>
+          <div>
+            <strong>SMS Activo</strong>
+            <p>${formatPhone(data.phoneNumber)}</p>
+            ${campaign ? `<p class="sms-detail">Campaña: ${campaign.status} | Tier: ${campaign.registrationTier || 'N/A'}</p>
+            <p class="sms-detail">Usos: ${useCases}</p>` : ''}
+          </div>
+        </div>
+      `;
+    } else if (data.campaignStatus) {
+      body.innerHTML = `
+        <div class="sms-status-result pending">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:20px;height:20px">
+            <circle cx="12" cy="12" r="10"></circle>
+            <polyline points="12 6 12 12 16 14"></polyline>
+          </svg>
+          <div>
+            <strong>SMS Pendiente</strong>
+            <p>${formatPhone(data.phoneNumber)} — Estado: ${data.campaignStatus}</p>
+            <p class="sms-note">La activación puede tardar hasta 48 horas.</p>
+          </div>
+        </div>
+        <button class="sms-btn check" onclick="checkSmsStatus()" style="margin-top:8px">
+          🔄 Verificar de Nuevo
+        </button>
+      `;
+    } else {
+      body.innerHTML = `
+        <div class="sms-status-result inactive">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:20px;height:20px">
+            <circle cx="12" cy="12" r="10"></circle>
+            <line x1="4.93" y1="4.93" x2="19.07" y2="19.07"></line>
+          </svg>
+          <div>
+            <strong>SMS No Configurado</strong>
+            <p>${formatPhone(data.phoneNumber || '')} — Sin campaña asignada</p>
+          </div>
+        </div>
+        <button class="sms-btn activate" onclick="activateSms()" style="margin-top:8px">
+          📱 Activar SMS
+        </button>
+      `;
+    }
+  } catch (error) {
+    body.innerHTML = `
+      <div class="sms-status-result error">
+        <strong>Error</strong>
+        <p>${escapeHtml(error.message)}</p>
+      </div>
+    `;
+  }
 }
 
 // ──────────────────────────────────────────────
