@@ -17,6 +17,7 @@ let currentDirectNumber = null;
 let inventoryNumbers = [];
 let activeJobId = null;
 let pollTimer = null;
+let cooldownTimer = null;
 
 // ── DOM Elements ──
 const stateLoading = document.getElementById('stateLoading');
@@ -173,6 +174,14 @@ async function apiCall(method, path, body = null) {
   }
 
   const data = await resp.json();
+
+  // Handle 429 cooldown response
+  if (resp.status === 429 && data.error === 'cooldown') {
+    const err = new Error(data.message);
+    err.cooldown = true;
+    err.cooldownRemainingSec = data.cooldownRemainingSec;
+    throw err;
+  }
 
   if (!resp.ok || !data.success) {
     throw new Error(data.details || data.error || 'API request failed');
@@ -359,13 +368,21 @@ async function executeSwitchNumber() {
       currentNumberValue.textContent = formatPhone(result.result.newNumber);
       currentNumberMeta.textContent = 'Actualizado ahora';
       await loadHistory();
+      // Start cooldown countdown after successful switch
+      startCooldownTimer(10 * 60);
     } else if (result.status === 'failed') {
       showErrorResult(result.error || 'Unknown error');
       await loadHistory();
     }
 
   } catch (error) {
-    showErrorResult(error.message);
+    // Handle cooldown rejection from backend
+    if (error.cooldown) {
+      startCooldownTimer(error.cooldownRemainingSec);
+      showCooldownResult(error.cooldownRemainingSec);
+    } else {
+      showErrorResult(error.message);
+    }
     try { await loadHistory(); } catch (_) {}
   } finally {
     activeJobId = null;
@@ -373,7 +390,10 @@ async function executeSwitchNumber() {
     btnText.style.display = 'inline';
     btnIcon.style.display = 'block';
     btnLoader.style.display = 'none';
-    btnSwitch.disabled = false;
+    // Don't re-enable if cooldown is active
+    if (!cooldownTimer) {
+      btnSwitch.disabled = false;
+    }
     loaderText.textContent = 'Procesando...';
     updateQueuePill(null);
   }
@@ -491,6 +511,65 @@ function showErrorResult(message) {
       <div class="result-text">
         <h4>Cambio Fallido</h4>
         <p>${escapeHtml(message)}</p>
+      </div>
+    </div>
+  `;
+  resultArea.style.display = 'block';
+}
+
+// ──────────────────────────────────────────────
+//  COOLDOWN TIMER
+// ──────────────────────────────────────────────
+
+/**
+ * Start a visual countdown on the switch button.
+ * Disables the button until the cooldown expires.
+ */
+function startCooldownTimer(seconds) {
+  // Clear any existing timer
+  if (cooldownTimer) clearInterval(cooldownTimer);
+
+  let remaining = seconds;
+  const btnText = btnSwitch.querySelector('.btn-text');
+  btnSwitch.disabled = true;
+  btnSwitch.classList.add('cooldown');
+
+  function updateDisplay() {
+    const min = Math.floor(remaining / 60);
+    const sec = remaining % 60;
+    btnText.textContent = `Espera ${min}:${sec.toString().padStart(2, '0')}`;
+  }
+
+  updateDisplay();
+
+  cooldownTimer = setInterval(() => {
+    remaining--;
+    if (remaining <= 0) {
+      clearInterval(cooldownTimer);
+      cooldownTimer = null;
+      btnText.textContent = 'Cambiar Mi Número';
+      btnSwitch.disabled = false;
+      btnSwitch.classList.remove('cooldown');
+    } else {
+      updateDisplay();
+    }
+  }, 1000);
+}
+
+/**
+ * Show a cooldown warning in the result area.
+ */
+function showCooldownResult(seconds) {
+  const min = Math.ceil(seconds / 60);
+  resultContent.innerHTML = `
+    <div class="result-cooldown">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="result-icon">
+        <circle cx="12" cy="12" r="10"></circle>
+        <polyline points="12 6 12 12 16 14"></polyline>
+      </svg>
+      <div class="result-text">
+        <h4>Tiempo de Espera Activo</h4>
+        <p>Debes esperar ${min} minuto(s) entre cambios de número para evitar abuso.</p>
       </div>
     </div>
   `;

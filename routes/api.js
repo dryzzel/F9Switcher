@@ -80,6 +80,27 @@ router.post('/switch-number', (req, res) => {
   const { extensionId, extensionName, extensionNumber } = req.agent;
   const { preferredNumberId } = req.body;
 
+  // ── Cooldown check: 10 minutes between changes per agent ──
+  const COOLDOWN_MS = 10 * 60 * 1000; // 10 minutes
+  const lastChange = db.getLastSuccessfulChange(extensionId);
+
+  if (lastChange) {
+    const lastChangeTime = new Date(lastChange).getTime();
+    const elapsed = Date.now() - lastChangeTime;
+    const remaining = COOLDOWN_MS - elapsed;
+
+    if (remaining > 0) {
+      const remainingSec = Math.ceil(remaining / 1000);
+      console.log(`[API] ⏳ Cooldown active for ${extensionName}: ${remainingSec}s remaining`);
+      return res.status(429).json({
+        success: false,
+        error: 'cooldown',
+        message: `Debes esperar ${Math.ceil(remainingSec / 60)} minuto(s) antes de cambiar tu número de nuevo.`,
+        cooldownRemainingSec: remainingSec,
+      });
+    }
+  }
+
   console.log(
     `[API] 🚀 Switch requested by ${extensionName} (${extensionId}) → enqueuing`
   );

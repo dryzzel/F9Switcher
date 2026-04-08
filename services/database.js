@@ -143,6 +143,23 @@ function getHistory(limit = 50, extensionId = null) {
 }
 
 /**
+ * Get the timestamp of the last successful change for an extension.
+ * Used to enforce cooldown periods.
+ * @param {string} extensionId
+ * @returns {string|null} ISO timestamp or null if no changes found
+ */
+function getLastSuccessfulChange(extensionId) {
+  const result = db.exec(
+    `SELECT created_at FROM number_changes
+     WHERE extension_id = ? AND status = 'success'
+     ORDER BY created_at DESC LIMIT 1`,
+    [extensionId]
+  );
+  if (!result.length || !result[0].values.length) return null;
+  return result[0].values[0][0];
+}
+
+/**
  * Get summary stats.
  */
 function getStats() {
@@ -171,4 +188,5 @@ module.exports = {
   logError,
   getHistory,
   getStats,
+  getLastSuccessfulChange,
 };

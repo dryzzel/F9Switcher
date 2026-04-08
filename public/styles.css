@@ -602,6 +602,33 @@ body {
   transform: none;
 }
 
+.btn-switch.cooldown {
+  background: linear-gradient(135deg, rgba(245, 158, 11, 0.2), rgba(245, 158, 11, 0.1));
+  border: 1px solid rgba(245, 158, 11, 0.3);
+  opacity: 0.85;
+  color: var(--warning);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ── Cooldown Result ── */
+.result-cooldown {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 16px;
+  background: var(--warning-bg);
+  border: 1px solid rgba(245, 158, 11, 0.3);
+  border-radius: var(--radius-md);
+}
+
+.result-cooldown .result-icon {
+  width: 20px;
+  height: 20px;
+  color: var(--warning);
+  flex-shrink: 0;
+  margin-top: 2px;
+}
+
 .btn-icon {
   width: 18px;
   height: 18px;
