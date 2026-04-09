@@ -96,6 +96,7 @@ router.get('/cooldown-status', (req, res) => {
           data: {
             active: true,
             cooldownRemainingSec: Math.ceil(remaining / 1000),
+            hadRecentSwitch: true,
           },
         });
       }
@@ -103,7 +104,7 @@ router.get('/cooldown-status', (req, res) => {
 
     res.json({
       success: true,
-      data: { active: false, cooldownRemainingSec: 0 },
+      data: { active: false, cooldownRemainingSec: 0, hadRecentSwitch: !!lastChange },
     });
   } catch (error) {
     console.error('[API] Error checking cooldown:', error.message);

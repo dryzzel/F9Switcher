@@ -147,8 +147,11 @@ async function restoreCooldownAndSms() {
     if (data.active && data.cooldownRemainingSec > 0) {
       // Restore the cooldown timer on the switch button
       startCooldownTimer(data.cooldownRemainingSec);
+    }
 
-      // Show SMS panel since a recent switch happened
+    // Show SMS panel if there was a recent switch (cooldown active or recently expired)
+    // The panel should be visible as long as the agent has a number to manage
+    if (data.active || data.hadRecentSwitch) {
       showSmsPanel();
     }
   } catch (err) {
@@ -167,10 +170,10 @@ function showSmsPanel() {
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:18px;height:18px">
           <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path>
         </svg>
-        <span>Mensajería SMS</span>
+        <span>SMS Messaging</span>
       </div>
       <div class="sms-panel-body" id="smsPanelBody">
-        <p class="sms-hint">Verificando estado SMS de tu número...</p>
+        <p class="sms-hint">Checking SMS status for your number...</p>
       </div>
     </div>
   `;
@@ -288,8 +291,8 @@ async function loadHistory() {
             <line x1="8" y1="21" x2="16" y2="21"></line>
             <line x1="12" y1="17" x2="12" y2="21"></line>
           </svg>
-          <p>No hay cambios registrados</p>
-          <span>Los cambios aparecerán aquí después del primer switch</span>
+          <p>No changes recorded yet</p>
+          <span>Changes will appear here after the first switch</span>
         </div>
       `;
       return;
@@ -350,20 +353,20 @@ function onSwitchClicked() {
 
   confirmDetails.innerHTML = `
     <div class="detail-row">
-      <span class="detail-label">Agente</span>
+      <span class="detail-label">Agent</span>
       <span class="detail-value">${escapeHtml(agentInfo.extensionName)}</span>
     </div>
     <div class="detail-row">
-      <span class="detail-label">Extensión</span>
+      <span class="detail-label">Extension</span>
       <span class="detail-value">${escapeHtml(agentInfo.extensionNumber)}</span>
     </div>
     <div class="detail-row">
-      <span class="detail-label">Número Actual</span>
+      <span class="detail-label">Current Number</span>
       <span class="detail-value">${formatPhone(currentDirectNumber.phoneNumber)}</span>
     </div>
     <div class="detail-row">
-      <span class="detail-label">Nuevo Número</span>
-      <span class="detail-value" style="color: var(--accent-secondary)">Aleatorio del inventario (${inventoryNumbers.length} disponibles)</span>
+      <span class="detail-label">New Number</span>
+      <span class="detail-value" style="color: var(--accent-secondary)">Random from inventory (${inventoryNumbers.length} available)</span>
     </div>
   `;
   confirmModal.style.display = 'flex';
@@ -389,7 +392,7 @@ async function executeSwitchNumber() {
   btnLoader.style.display = 'flex';
   btnSwitch.disabled = true;
   resultArea.style.display = 'none';
-  loaderText.textContent = 'Enqueuing...';
+  loaderText.textContent = 'Queuing...';
 
   try {
     // Enqueue the job — NO extensionId in the body!
@@ -399,9 +402,9 @@ async function executeSwitchNumber() {
     activeJobId = data.jobId;
 
     if (data.position > 1) {
-      loaderText.textContent = `En cola (posición ${data.position})...`;
+      loaderText.textContent = `Queued (position ${data.position})...`;
     } else {
-      loaderText.textContent = 'Procesando...';
+      loaderText.textContent = 'Processing...';
     }
 
     updateQueuePill(data.queueInfo);
@@ -412,7 +415,7 @@ async function executeSwitchNumber() {
     if (result.status === 'completed' && result.result) {
       showSuccessResult(result.result);
       currentNumberValue.textContent = formatPhone(result.result.newNumber);
-      currentNumberMeta.textContent = 'Actualizado ahora';
+      currentNumberMeta.textContent = 'Just updated';
       await loadHistory();
       // Start cooldown countdown after successful switch
       startCooldownTimer(10 * 60);
@@ -440,7 +443,7 @@ async function executeSwitchNumber() {
     if (!cooldownTimer) {
       btnSwitch.disabled = false;
     }
-    loaderText.textContent = 'Procesando...';
+    loaderText.textContent = 'Processing...';
     updateQueuePill(null);
   }
 }
@@ -466,12 +469,12 @@ function pollJobUntilDone(jobId) {
 
         if (data.status === 'queued') {
           loaderText.textContent = data.position > 0
-            ? `En cola (posición ${data.position})...`
-            : 'En cola...';
+            ? `Queued (position ${data.position})...`
+            : 'Queued...';
           updateQueuePill(data.queueInfo);
 
         } else if (data.status === 'processing') {
-          loaderText.textContent = 'Cambiando número...';
+          loaderText.textContent = 'Switching number...';
 
         } else if (data.status === 'completed') {
           resolve(data);
@@ -514,7 +517,7 @@ function showSuccessResult(result) {
          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="width:14px;height:14px">
            <polyline points="20 6 9 17 4 12"></polyline>
          </svg>
-         Número anterior eliminado permanentemente
+         Old number permanently deleted
        </div>`
     : `<div class="deletion-badge warning">
          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:14px;height:14px">
@@ -522,7 +525,7 @@ function showSuccessResult(result) {
            <line x1="12" y1="9" x2="12" y2="13"></line>
            <line x1="12" y1="17" x2="12.01" y2="17"></line>
          </svg>
-         El número anterior puede seguir en inventario
+         Old number may still be in inventory
        </div>`;
 
   resultContent.innerHTML = `
@@ -532,7 +535,7 @@ function showSuccessResult(result) {
         <polyline points="22 4 12 14.01 9 11.01"></polyline>
       </svg>
       <div class="result-text">
-        <h4>¡Número Cambiado Exitosamente!</h4>
+        <h4>Number Switched Successfully!</h4>
         <p>${escapeHtml(result.message)}</p>
       </div>
     </div>
@@ -547,26 +550,26 @@ function showSuccessResult(result) {
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:18px;height:18px">
           <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path>
         </svg>
-        <span>Mensajería SMS</span>
+        <span>SMS Messaging</span>
       </div>
       <div class="sms-panel-body" id="smsPanelBody">
-        <p class="sms-hint">¿Deseas activar SMS para este nuevo número?</p>
+        <p class="sms-hint">Would you like to activate SMS for this new number?</p>
         <div class="sms-actions">
           <button class="sms-btn activate" onclick="activateSms()" id="btnActivateSms">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:16px;height:16px">
               <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path>
             </svg>
-            Activar SMS
+            Activate SMS
           </button>
           <button class="sms-btn check" onclick="checkSmsStatus()" id="btnCheckSms">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:16px;height:16px">
               <circle cx="11" cy="11" r="8"></circle>
               <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
             </svg>
-            Verificar Estado
+            Check Status
           </button>
         </div>
-        <p class="sms-note">ℹ️ La activación puede tardar hasta 48 horas.</p>
+        <p class="sms-note">⚠️ Activation may take up to 48 hours. Immediate results can happen, but are not guaranteed — please be patient.</p>
       </div>
     </div>
   `;
@@ -582,7 +585,7 @@ function showErrorResult(message) {
         <line x1="9" y1="9" x2="15" y2="15"></line>
       </svg>
       <div class="result-text">
-        <h4>Cambio Fallido</h4>
+        <h4>Switch Failed</h4>
         <p>${escapeHtml(message)}</p>
       </div>
     </div>
@@ -604,7 +607,7 @@ async function activateSms() {
   if (!btn) return;
 
   btn.disabled = true;
-  btn.textContent = 'Enviando...';
+  btn.textContent = 'Sending...';
 
   try {
     const { data } = await apiCall('POST', '/api/sms-activation');
@@ -616,7 +619,7 @@ async function activateSms() {
           <polyline points="12 6 12 12 16 14"></polyline>
         </svg>
         <div>
-          <strong>Solicitud Enviada</strong>
+          <strong>Request Sent</strong>
           <p>${escapeHtml(data.message)}</p>
           <p class="sms-phone">${formatPhone(data.phoneNumber)}</p>
         </div>
@@ -626,7 +629,7 @@ async function activateSms() {
           <circle cx="11" cy="11" r="8"></circle>
           <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
         </svg>
-        Verificar Estado
+        Check Status
       </button>
     `;
   } catch (error) {
@@ -638,7 +641,7 @@ async function activateSms() {
           <line x1="9" y1="9" x2="15" y2="15"></line>
         </svg>
         <div>
-          <strong>Error al Activar SMS</strong>
+          <strong>SMS Activation Error</strong>
           <p>${escapeHtml(error.message)}</p>
         </div>
       </div>
@@ -654,7 +657,7 @@ async function checkSmsStatus() {
   const body = document.getElementById('smsPanelBody');
   if (!body) return;
 
-  body.innerHTML = '<p class="sms-hint">Verificando estado SMS...</p>';
+  body.innerHTML = '<p class="sms-hint">Checking SMS status...</p>';
 
   try {
     const { data } = await apiCall('GET', '/api/sms-status');
@@ -669,10 +672,10 @@ async function checkSmsStatus() {
             <polyline points="22 4 12 14.01 9 11.01"></polyline>
           </svg>
           <div>
-            <strong>SMS Activo</strong>
+            <strong>SMS Active</strong>
             <p>${formatPhone(data.phoneNumber)}</p>
-            ${campaign ? `<p class="sms-detail">Campaña: ${campaign.status} | Tier: ${campaign.registrationTier || 'N/A'}</p>
-            <p class="sms-detail">Usos: ${useCases}</p>` : ''}
+            ${campaign ? `<p class="sms-detail">Campaign: ${campaign.status} | Tier: ${campaign.registrationTier || 'N/A'}</p>
+            <p class="sms-detail">Uses: ${useCases}</p>` : ''}
           </div>
         </div>
       `;
@@ -684,13 +687,13 @@ async function checkSmsStatus() {
             <polyline points="12 6 12 12 16 14"></polyline>
           </svg>
           <div>
-            <strong>SMS Pendiente</strong>
-            <p>${formatPhone(data.phoneNumber)} — Estado: ${data.campaignStatus}</p>
-            <p class="sms-note">La activación puede tardar hasta 48 horas.</p>
+            <strong>SMS Pending</strong>
+            <p>${formatPhone(data.phoneNumber)} — Status: ${data.campaignStatus}</p>
+            <p class="sms-note">⚠️ Activation may take up to 48 hours. Immediate results can happen, but are not guaranteed — please be patient.</p>
           </div>
         </div>
         <button class="sms-btn check" onclick="checkSmsStatus()" style="margin-top:8px">
-          🔄 Verificar de Nuevo
+          🔄 Check Again
         </button>
       `;
     } else {
@@ -701,13 +704,26 @@ async function checkSmsStatus() {
             <line x1="4.93" y1="4.93" x2="19.07" y2="19.07"></line>
           </svg>
           <div>
-            <strong>SMS No Configurado</strong>
-            <p>${formatPhone(data.phoneNumber || '')} — Sin campaña asignada</p>
+            <strong>SMS Not Configured</strong>
+            <p>${formatPhone(data.phoneNumber || '')} — No campaign assigned</p>
           </div>
         </div>
-        <button class="sms-btn activate" onclick="activateSms()" style="margin-top:8px">
-          📱 Activar SMS
-        </button>
+        <div class="sms-actions" style="margin-top:8px">
+          <button class="sms-btn activate" onclick="activateSms()" id="btnActivateSms">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:16px;height:16px">
+              <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path>
+            </svg>
+            Activate SMS
+          </button>
+          <button class="sms-btn check" onclick="checkSmsStatus()" id="btnCheckSms">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:16px;height:16px">
+              <circle cx="11" cy="11" r="8"></circle>
+              <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+            </svg>
+            Check Status
+          </button>
+        </div>
+        <p class="sms-note">⚠️ Activation may take up to 48 hours. Immediate results can happen, but are not guaranteed — please be patient.</p>
       `;
     }
   } catch (error) {
@@ -740,7 +756,7 @@ function startCooldownTimer(seconds) {
   function updateDisplay() {
     const min = Math.floor(remaining / 60);
     const sec = remaining % 60;
-    btnText.textContent = `Espera ${min}:${sec.toString().padStart(2, '0')}`;
+    btnText.textContent = `Wait ${min}:${sec.toString().padStart(2, '0')}`;
   }
 
   updateDisplay();
@@ -750,7 +766,7 @@ function startCooldownTimer(seconds) {
     if (remaining <= 0) {
       clearInterval(cooldownTimer);
       cooldownTimer = null;
-      btnText.textContent = 'Cambiar Mi Número';
+      btnText.textContent = 'Switch My Number';
       btnSwitch.disabled = false;
       btnSwitch.classList.remove('cooldown');
     } else {
@@ -771,8 +787,8 @@ function showCooldownResult(seconds) {
         <polyline points="12 6 12 12 16 14"></polyline>
       </svg>
       <div class="result-text">
-        <h4>Tiempo de Espera Activo</h4>
-        <p>Debes esperar ${min} minuto(s) entre cambios de número para evitar abuso.</p>
+        <h4>Cooldown Active</h4>
+        <p>You must wait ${min} minute(s) between number changes to prevent abuse.</p>
       </div>
     </div>
   `;
@@ -853,15 +869,15 @@ function formatTime(dateStr) {
   const now = new Date();
   const diff = now - date;
 
-  if (diff < 60000) return 'Ahora mismo';
-  if (diff < 3600000) return `hace ${Math.floor(diff / 60000)}m`;
+  if (diff < 60000) return 'Just now';
+  if (diff < 3600000) return `${Math.floor(diff / 60000)}m ago`;
   if (date.toDateString() === now.toDateString()) {
     return date.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
   }
   const yesterday = new Date(now);
   yesterday.setDate(yesterday.getDate() - 1);
   if (date.toDateString() === yesterday.toDateString()) {
-    return `Ayer ${date.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}`;
+    return `Yesterday ${date.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}`;
   }
   return date.toLocaleDateString('en-US', {
     month: 'short',

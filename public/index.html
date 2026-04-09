@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta name="description" content="RingCentral Agent Number Switcher — Securely change your softphone number">
   <title>Number Switcher | RingCentral</title>
+  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Cdefs%3E%3ClinearGradient id='g' x1='0' y1='0' x2='1' y2='1'%3E%3Cstop offset='0%25' stop-color='%236366f1'/%3E%3Cstop offset='100%25' stop-color='%238b5cf6'/%3E%3C/linearGradient%3E%3C/defs%3E%3Ccircle cx='32' cy='32' r='32' fill='url(%23g)'/%3E%3Cpath d='M40 18v4h-4l6 6 6-6h-4v-4zM22 46v-4h4l-6-6-6 6h4v4z' fill='white' opacity='0.9'/%3E%3Cpath d='M38 35.7v2.1a1.4 1.4 0 0 1-1.53 1.4 13.9 13.9 0 0 1-6.06-2.15A13.7 13.7 0 0 1 26 32.84a13.9 13.9 0 0 1-2.15-6.06A1.4 1.4 0 0 1 25.24 25.3h2.1a1.4 1.4 0 0 1 1.4 1.2 9 9 0 0 0 .49 1.97 1.4 1.4 0 0 1-.32 1.48l-.89.89a11.2 11.2 0 0 0 4.2 4.2l.89-.89a1.4 1.4 0 0 1 1.48-.32 9 9 0 0 0 1.97.49 1.4 1.4 0 0 1 1.2 1.42z' fill='white' stroke='white' stroke-width='0.5'/%3E%3C/svg%3E">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
@@ -86,8 +87,8 @@
                   <path d="M7 11V7a5 5 0 0 1 10 0v4"></path>
                 </svg>
               </div>
-              <h2 class="login-title">Autenticación Requerida</h2>
-              <p class="login-subtitle">Para cambiar tu número de teléfono, inicia sesión con tu cuenta de RingCentral.</p>
+              <h2 class="login-title">Authentication Required</h2>
+              <p class="login-subtitle">To change your phone number, please log in with your RingCentral account.</p>
               <a href="/api/auth/login" class="btn-rc-login" id="btnLogin">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="btn-icon-sm">
                   <path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"></path>
@@ -96,7 +97,7 @@
                 </svg>
                 Login with RingCentral
               </a>
-              <p class="login-hint">Serás redirigido a RingCentral para iniciar sesión de forma segura.</p>
+              <p class="login-hint">You will be redirected to RingCentral to log in securely.</p>
 
               <!-- Auth error display -->
               <div class="auth-error" id="authError" style="display:none">
@@ -120,7 +121,7 @@
                   <span class="user-ext" id="userExt">Ext. —</span>
                 </div>
               </div>
-              <button class="btn-logout" id="btnLogout" title="Cerrar sesión">
+              <button class="btn-logout" id="btnLogout" title="Log out">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                   <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"></path>
                   <polyline points="16 17 21 12 16 7"></polyline>
@@ -133,7 +134,7 @@
             <div class="card-body">
               <!-- Current Number Display -->
               <div class="number-display" id="currentNumberDisplay" style="display:none">
-                <div class="number-label">Tu Número Actual</div>
+                <div class="number-label">Your Current Number</div>
                 <div class="number-value" id="currentNumberValue">—</div>
                 <div class="number-meta" id="currentNumberMeta"></div>
               </div>
@@ -143,7 +144,7 @@
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="icon-sm">
                   <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"></path>
                 </svg>
-                <span id="inventoryCount">0</span> números disponibles en inventario
+                <span id="inventoryCount">0</span> numbers available in inventory
               </div>
 
               <!-- Switch Button -->
@@ -153,7 +154,7 @@
                   <polyline points="1 20 1 14 7 14"></polyline>
                   <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path>
                 </svg>
-                <span class="btn-text">Cambiar Mi Número</span>
+                <span class="btn-text">Switch My Number</span>
                 <div class="btn-loader" style="display:none">
                   <div class="spinner"></div>
                   <span id="loaderText">Processing...</span>
@@ -176,7 +177,7 @@
                 <circle cx="12" cy="12" r="10"></circle>
                 <polyline points="12 6 12 12 16 14"></polyline>
               </svg>
-              Mi Historial
+              My History
             </h2>
             <button class="btn-refresh" id="btnRefreshHistory" title="Refresh history">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -213,16 +214,16 @@
           <line x1="12" y1="17" x2="12.01" y2="17"></line>
         </svg>
       </div>
-      <h3>Confirmar Cambio de Número</h3>
-      <p id="confirmMessage">¿Estás seguro de que quieres cambiar tu número de teléfono?</p>
+      <h3>Confirm Number Switch</h3>
+      <p id="confirmMessage">Are you sure you want to change your phone number?</p>
       <div class="confirm-details" id="confirmDetails"></div>
       <div class="modal-actions">
-        <button class="btn-cancel" id="btnCancel">Cancelar</button>
+        <button class="btn-cancel" id="btnCancel">Cancel</button>
         <button class="btn-confirm" id="btnConfirm">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="btn-icon-sm">
             <polyline points="20 6 9 17 4 12"></polyline>
           </svg>
-          Confirmar Cambio
+          Confirm Switch
         </button>
       </div>
     </div>
